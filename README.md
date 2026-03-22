@@ -1,2 +1,1 @@
-# pea
-Protest Event Analysis - MVP
+# Protest Event Analysis - MVP
