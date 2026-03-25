@@ -1,21 +1,82 @@
-# Example Protest Event Codebook for LLM Classification
+# Protest Event Codebook for LLM Classification
 # Aligned with Meta Codebook & Halterman & Keith (2025)
 # Author: Your Name
 # Created: March 2026
-# Version: 1.0
+# Version: 1.1 — Revised after first pipeline run (2026-03-22)
+#
+# Revision notes (v1.1):
+#   - Expanded non_events based on observed false positives: conferences, celebrations,
+#     armed attacks, sports matches, economic meetings, helicopter crashes, phone calls,
+#     import/export news, donations, war/conflict reporting
+#   - Added African/Global South context notes throughout
+#   - Added mandatory pre-extraction checklist (minimum_criteria)
+#   - Aligned event_type keys with extractor vocabulary (see type_aliases)
+#   - Strengthened confidence guidance
 
 metadata:
-  title: "Comprehensive Protest Event Codebook for LLM Classification"
+  title: "Protest Event Codebook for LLM Classification — Global South Focus"
   description: "Type III Stipulative definitions for zero-shot and few-shot event classification"
   temporal_scope: "Any time period"
-  geographic_scope: "Global (English-language sources)"
+  geographic_scope: "Global South / non-Western contexts (primary); English and translated sources"
   source_datasets: ["ACLED", "PolDem", "FARPE", "Meta Codebook"]
   unit_of_analysis: "Individual protest event"
   minimum_participants: 2
+  version: "1.1"
+  last_updated: "2026-03-22"
+
+# ============================================================================
+# MINIMUM CRITERIA — ALL must be satisfied before any event is coded
+# ============================================================================
+#
+# Before assigning any event type, verify ALL of the following:
+#
+minimum_criteria:
+  1_collective_action: "≥2 people acting together (not an individual)"
+  2_public_setting: "Action takes place in public space or targets a public/institutional audience"
+  3_political_motivation: "Explicit political motivation, grievance, or demand stated or strongly implied"
+  4_voluntary_contention: "Action is chosen by participants (not a natural disaster, accident, or armed attack by external forces)"
+  5_not_institutional: "Action is OUTSIDE normal institutional channels (not a scheduled conference, board meeting, parliamentary vote, or legal proceeding)"
+  6_real_world_action: "Physical action occurred (not a planned future event, proposal, or retrospective policy discussion)"
+
+  disqualify_immediately:
+    - "Article is about scheduled meetings, conferences, or official gatherings of government/institutions"
+    - "Article describes armed conflict, terrorism, or military operations"
+    - "Article describes economic or trade activity (exports, imports, donations, investments)"
+    - "Article is a phone call, interview, or statement by a public official"
+    - "Article describes a sports match, cultural celebration, or entertainment event"
+    - "Article describes natural disasters, accidents, or crashes"
+    - "Article is an analysis, commentary, or academic discussion ABOUT protest (not reporting one)"
+    - "Article is about legal proceedings, court judgments, or electoral processes"
 
 # ============================================================================
 # CORE EVENT TYPES
 # ============================================================================
+#
+# IMPORTANT: Use the exact key names below as the event_type value.
+# Valid keys: demonstration_march | strike_boycott | riot | occupation_seizure
+#             | confrontation | petition_signature
+#
+# Type aliases accepted during extraction (will be normalised downstream):
+type_aliases:
+  "demonstration": "demonstration_march"
+  "march": "demonstration_march"
+  "rally": "demonstration_march"
+  "protest": "demonstration_march"
+  "strike": "strike_boycott"
+  "general_strike": "strike_boycott"
+  "general strike": "strike_boycott"
+  "boycott": "strike_boycott"
+  "walkout": "strike_boycott"
+  "riot": "riot"
+  "uprising": "riot"
+  "violent protest": "riot"
+  "occupation": "occupation_seizure"
+  "sit-in": "occupation_seizure"
+  "sit_in": "occupation_seizure"
+  "blockade": "occupation_seizure"
+  "confrontation": "confrontation"
+  "picket": "confrontation"
+  "petition": "petition_signature"
 
 event_types:
 
@@ -27,34 +88,40 @@ event_types:
       grievances, or support for a cause. Participants engage in PEACEFUL actions
       such as chanting, holding signs, speeches, or walking together (no violence).
       Must have explicit political motivation or public purpose.
-    
+
     positive_examples:
       - "500 workers gathered outside factory demanding wage increases and better benefits"
       - "Climate activists held a 3-hour march through downtown with signs reading 'Save Our Planet'"
       - "Labor union organized peaceful rally outside city hall to protest pension cuts"
       - "2,000 people demonstrated in streets supporting voting rights for undocumented immigrants"
-    
+      - "Nigerian civil society groups marched on the National Assembly demanding fuel subsidy reversal"
+      - "South African students held demonstrations at multiple campuses over the #FeesMustFall demands"
+      - "Ugandan opposition supporters gathered outside Electoral Commission offices to protest vote-rigging"
+
     negative_examples:
       - "Individual person standing alone with sign (lacks ≥2 people threshold)"
-      - "Spontaneous bar brawl that happens to involve political workers (violence + no stated political goal)"
       - "Online petition or social media discussion about a cause (not physical assembly)"
       - "News report ABOUT a protest (the article itself is not the protest event)"
-      - "Church service attended by activists (not explicitly political assembly)"
-    
+      - "Church service or religious gathering (not explicitly political assembly)"
+      - "SADC summit or African Union meeting (institutional, not protest)"
+      - "Economic conference attended by government officials and economists"
+      - "Community celebration or cultural festival with political speeches"
+      - "Press conference by political party announcing policy position"
+
     decision_rules:
-      - "IF participants are ≥2 AND physically assembled AND expressing political demands AND non-violent → classify as DEMONSTRATION"
-      - "IF peaceful demonstration escalates to violence during the same time period → classify as RIOT (escalation takes priority)"
-      - "IF demonstration is part of larger strike (e.g., striking workers march) → classify as STRIKE (more specific category)"
+      - "IF participants ≥2 AND physically assembled AND expressing political demands AND non-violent → DEMONSTRATION_MARCH"
+      - "IF peaceful demonstration escalates to violence during same time period → RIOT (escalation takes priority)"
+      - "IF demonstration is part of larger strike (e.g., striking workers march) → STRIKE_BOYCOTT (more specific)"
       - "IF duration < 15 minutes AND no specific political claim → consider CONFRONTATION instead"
-      - "IF ≥5,000 people AND event described as 'unruly' or 'massive turnout' → still DEMONSTRATION if non-violent"
-    
+      - "IF ≥5,000 people AND described as 'unruly' or 'massive turnout' → still DEMONSTRATION if non-violent"
+
     confidence_threshold: 0.70
     codebook_equivalents:
       acled: "Protests"
       poldem: "Demonstration, protest march (code 3 or 6)"
       farpe: "Public assembly, March/demonstration"
       capt: "Rally, March"
-    
+
     temporal_markers:
       - "gathered"
       - "assembled"
@@ -63,13 +130,17 @@ event_types:
       - "protested"
       - "rally"
       - "march"
+      - "took to the streets"
+      - "poured into the streets"
     actor_typically:
       - "Labor unions"
       - "Civil rights groups"
       - "Environmental organizations"
       - "Community groups"
-      - "Political parties"
+      - "Political parties (acting as protest organiser, not in official capacity)"
       - "Spontaneous protesters"
+      - "Students"
+      - "Women's groups"
 
   strike_boycott:
     name: "Strike or Boycott"
@@ -79,37 +150,45 @@ event_types:
       INTENTIONAL and ORGANIZED (not individual choice). Participants halt production,
       refuse to work shifts, or organize coordinated non-consumption to pressure targets
       into policy change or wage/benefit improvements.
-    
+
     positive_examples:
       - "Union members refused to work, shutting down production at automotive factory"
       - "Organized consumer boycott of company products to protest labor practices"
-      - "Teachers' union called members out to strike, closing schools across district"
+      - "Teachers' union called members out on strike, closing schools across district"
       - "Bus drivers coordinated week-long strike demanding pension improvements"
-    
+      - "South African public sector workers downed tools in nationwide strike over wage dispute"
+      - "Nigerian oil workers threatened to strike unless government reverses fuel policy"
+      - "Algerian civil servants staged a general strike against austerity measures"
+
     negative_examples:
       - "Individual worker decided not to go to work (personal choice, not organized)"
-      - "Shoppers choosing not to buy a brand because they prefer competitor (market choice)"
-      - "Mass sick day that wasn't organized by group (spontaneous, not collective action)"
-    
+      - "Shoppers choosing not to buy a brand (market choice, not political boycott)"
+      - "Mass sick day not organised by any group (spontaneous, not collective action)"
+      - "Company shutting down production due to supply chain issues (not a labor action)"
+      - "Parliament refusing to pass a bill (institutional channel, not protest)"
+
     decision_rules:
-      - "KEY: Must be ORGANIZED (e.g., union call, group coordination, announced publicly)"
+      - "KEY: Must be ORGANIZED (union call, group coordination, publicly announced)"
       - "Individual refusal without organization → NOT a strike/boycott"
       - "IF work stoppage explicitly tied to demands → STRIKE"
       - "IF refusal to consume tied to political goal → BOYCOTT"
-    
+
     confidence_threshold: 0.75
     codebook_equivalents:
       acled: "Protests (specific to strikes)"
       poldem: "Strike (code 1), Boycott (code 11)"
       capt: "Strike"
-    
+
     temporal_markers:
       - "strike"
       - "boycott"
       - "refused to work"
+      - "downed tools"
+      - "work stoppage"
       - "shutdown"
       - "coordinated refusal"
-      - "organized non-consumption"
+      - "general strike"
+      - "industrial action"
 
   riot:
     name: "Riot or Violent Protest"
@@ -119,41 +198,47 @@ event_types:
       to violence, OR may be violent from start. Key characteristic: participants are
       clearly identified as engaging in VIOLENCE (not police response to peaceful protest).
       Violence must be initiated by protesters, not reaction to state repression.
-    
+
     positive_examples:
       - "During protest march, group of youths broke shop windows and clashed with police"
       - "Rioters set fires to vehicles and fought with security forces"
       - "Violent confrontation resulted in 15 injured and 30 arrests"
       - "Looters and arsonists took over downtown streets for several hours"
-    
+      - "Post-election violence erupted as supporters of losing candidate burned vehicles"
+
     negative_examples:
       - "Police used tear gas against peaceful protesters (police action, not riot)"
-      - "Peaceful march where police initiated violence (still classify as DEMONSTRATION)"
-      - "Property damage from weather/accident, not collective violence"
+      - "Peaceful march where police initiated violence (still DEMONSTRATION)"
+      - "Property damage from weather or accident (not collective political violence)"
       - "Verbal fight between individuals on political topic (not collective action)"
-    
+      - "Military or armed group attacks civilians (armed conflict, not protest riot)"
+      - "Terrorist attack or insurgency action (out of scope)"
+
     decision_rules:
-      - "CRITICAL: Violence must be initiated by PROTESTERS, not police response"
-      - "IF peaceful protest → police use force → classify as DEMONSTRATION (not riot)"
-      - "IF some violence during event, ask: was it majority participant action or minority action?"
+      - "CRITICAL: Violence must be initiated by PROTESTERS, not state/police response"
+      - "IF peaceful protest → police use force → DEMONSTRATION (not riot)"
+      - "IF some violence during event, ask: was it majority participant action or minority?"
       - "IF minority broke off to riot while main group stayed peaceful → code as TWO EVENTS"
       - "When in doubt: favor peaceful classification (assume force was provoked by police)"
-    
+      - "IF article describes armed attack by militia/military → NOT a protest event"
+
     confidence_threshold: 0.80
     codebook_equivalents:
       acled: "Riots"
       poldem: "Protest violently or riot (code 34-35)"
       capt: "Riot"
-    
+
     temporal_markers:
       - "riot"
       - "violent clash"
       - "violent protest"
       - "looting"
       - "arson"
-      - "burning"
+      - "burning vehicles"
       - "fighting"
       - "clashed with"
+      - "petrol bombs"
+      - "stone throwing"
 
   occupation_seizure:
     name: "Occupation or Building Seizure"
@@ -163,22 +248,24 @@ event_types:
       express demands or exert pressure through physical presence. Action is usually
       non-violent but represents direct action seizing control of space. Examples:
       sit-ins, encampments, takeovers of buildings/offices.
-    
+
     positive_examples:
       - "Activists occupied plaza for 3 weeks, setting up camp to protest austerity measures"
       - "Students sat in at university administration building demanding policy change"
       - "Protesters blocked entry to government office for 24 hours"
       - "Movement established autonomous zone with barriers and tents in downtown area"
-    
+
     negative_examples:
       - "Brief blockade lasting <15 minutes (better classified as CONFRONTATION)"
       - "Occupying own private property for reasons unrelated to protest"
-    
+      - "Military occupation or territorial seizure by armed forces (conflict, not protest)"
+
     decision_rules:
       - "KEY: Duration and intentional occupation of space critical"
       - "IF just blocking passage without occupying space → CONFRONTATION"
-      - "IF occupies space for hours+ → OCCUPATION"
-    
+      - "IF occupies space for hours+ → OCCUPATION_SEIZURE"
+      - "Armed groups taking territory → NOT a protest event"
+
     confidence_threshold: 0.75
 
   confrontation:
@@ -189,22 +276,24 @@ event_types:
       Examples: blocking roads/pathways, surrounding buildings, surrounding individuals,
       picketing, disrupting events, entering restricted areas. Purpose is to obstruct,
       interrupt, or directly challenge through physical presence rather than walking/standing.
-    
+
     positive_examples:
       - "Activists blocked entrance to government building, preventing workers from entering"
       - "Group surrounded police vehicle and prevented it from leaving"
       - "Protesters disrupted political rally by interrupting speakers"
       - "Activists picketed outside corporate headquarters"
-    
+
     negative_examples:
-      - "People simply standing in crowd (classification: DEMONSTRATION)"
+      - "People simply standing in crowd (classification: DEMONSTRATION_MARCH)"
       - "Violence or property destruction (classification: RIOT)"
-      - "Organized work stoppage (classification: STRIKE)"
-    
+      - "Organized work stoppage (classification: STRIKE_BOYCOTT)"
+      - "Diplomatic confrontation between countries (not a protest event)"
+      - "Verbal argument between public officials or politicians"
+
     decision_rules:
-      - "Distinguish from DEMONSTRATION: Confrontation involves direct obstruction/interruption"
+      - "Distinguish from DEMONSTRATION_MARCH: Confrontation involves direct obstruction/interruption"
       - "Distinguish from RIOT: Confrontation is intentional but non-violent"
-    
+
     confidence_threshold: 0.70
 
   petition_signature:
@@ -213,63 +302,179 @@ event_types:
       Organized collection of signatures on petitions, letter-writing campaigns, or
       formal written demands. Must involve ACTIVE collection/organization (e.g., public
       petition table, coordinated email campaign), not just individuals signing.
-      Excludes online petitions or social media unless explicitly part of organized campaign.
-    
+
     positive_examples:
       - "Group set up table to collect signatures for petition demanding park preservation"
       - "Union coordinated letter-writing campaign to legislators demanding wage increase"
-      - "Environmental organization organized online petition with 100,000+ signers as campaign"
-    
+      - "Civil society coalition launched petition with 50,000+ signers to parliament"
+
     negative_examples:
       - "Individual posts petition online without organizing others"
       - "Person signs petition they found (signing alone, not organizing)"
-    
+      - "Government publishing a public report or statement"
+
     confidence_threshold: 0.65
+
+# ============================================================================
+# NON-EVENTS — Explicit Exclusions
+# ============================================================================
+#
+# DO NOT extract these as protest events.
+# If the article is primarily about one of these, return an empty array [].
+#
+non_events:
+
+  - category: "Armed conflict / terrorism / insurgency"
+    examples:
+      - "Armed group attacks government targets"
+      - "Military operations or airstrikes"
+      - "Terrorist bombing or attack"
+      - "Helicopter crash during military operation"
+      - "Armed rebel group seizes territory"
+    reason: "Beyond scope of protest event analysis; see conflict datasets (ACLED armed conflict, GTD)"
+
+  - category: "Conferences, summits, and official meetings"
+    examples:
+      - "SADC summit attended by regional heads of state"
+      - "African Union ministerial meeting"
+      - "Economic conference or business forum"
+      - "Government review meeting or budget session"
+      - "International organisation convening member states"
+      - "Economists presenting research at a forum"
+    reason: "Institutional activity through normal channels, not contentious collective action"
+
+  - category: "Phone calls, press conferences, and statements"
+    examples:
+      - "President calls counterpart to discuss bilateral ties"
+      - "Minister holds press conference on policy"
+      - "Official issues statement condemning violence"
+      - "Spokesperson announces government position"
+    reason: "Communication, not collective public action"
+
+  - category: "Celebrations, ceremonies, and cultural events"
+    examples:
+      - "Independence Day celebrations"
+      - "Religious festival or national holiday gathering"
+      - "Victory celebration after sports match"
+      - "Cultural parade or carnival"
+      - "Presidential inauguration ceremony"
+    reason: "No political contention or grievance expressed; gathering is celebratory"
+
+  - category: "Sports matches and entertainment"
+    examples:
+      - "Football match or sports tournament"
+      - "Concert or music festival"
+      - "National team competition"
+    reason: "No protest element"
+
+  - category: "Economic and trade activity"
+    examples:
+      - "Country exports commodities to trading partner"
+      - "Trade delegation signs agreement"
+      - "Foreign investment or donation announced"
+      - "Import/export statistics released"
+    reason: "Economic activity, not collective protest action"
+
+  - category: "Natural disasters and accidents"
+    examples:
+      - "Helicopter crash kills passengers"
+      - "Flood displaces communities"
+      - "Industrial accident at factory"
+    reason: "Not voluntary collective action"
+
+  - category: "Diplomatic events and international relations"
+    examples:
+      - "Countries hold bilateral talks"
+      - "Peace negotiations between warring parties"
+      - "Diplomatic expulsion of ambassador"
+      - "International court ruling"
+    reason: "Institutional/governmental activity, not protest"
+
+  - category: "Legal and electoral processes"
+    examples:
+      - "Court verdict or sentencing"
+      - "Election results announced"
+      - "Parliament votes on legislation"
+      - "Constitutional amendment passed"
+    reason: "Outcomes of formal institutions, not protest events (though protests may FOLLOW these)"
+
+  - category: "Humanitarian and aid activity"
+    examples:
+      - "Aid convoy delivers food to conflict zone"
+      - "NGO distributes supplies"
+      - "Refugee camp established"
+    reason: "Not contentious collective action by protesters"
+
+  - category: "War and inter-state conflict"
+    examples:
+      - "Ongoing armed conflict between states"
+      - "Military advance or retreat"
+      - "Siege of city by armed forces"
+    reason: "Distinct from protest events; use dedicated conflict datasets"
+
+# ============================================================================
+# AFRICAN / GLOBAL SOUTH CONTEXT NOTES
+# ============================================================================
+#
+# This codebook is designed for Global South contexts. Key considerations:
+#
+african_context:
+
+  regional_organizations_not_protests:
+    note: "SADC, AU, ECOWAS, IGAD summits and meetings are NOT protest events"
+    examples:
+      - "SADC heads of state summit → NOT a protest"
+      - "AU Commission meeting → NOT a protest"
+      - "ECOWAS mediation mission → NOT a protest"
+
+  protest_specific_to_region:
+    note: "Common African protest forms that DO qualify"
+    examples:
+      - "Street demonstrations against fuel price increases (Nigeria, Zimbabwe, etc.)"
+      - "Anti-austerity marches (South Africa, Zambia, Kenya)"
+      - "Land rights protests (South Africa, Kenya, Zimbabwe)"
+      - "Post-election protests and demonstrations (widespread)"
+      - "Student protests over fees, accommodation (South Africa, Uganda)"
+      - "Labour strikes in mining, public sector (South Africa, Zambia)"
+      - "Anti-government demonstrations in Algeria (ongoing since Hirak 2019)"
+
+  country_filter_note: |
+    This pipeline targets African countries. If an extracted event is set in a country
+    outside Africa AND the article source is also non-African, set confidence to 'low'
+    and flag in outcome_notes. India, Pakistan, Iran, Turkey, China, and European
+    countries are outside the primary scope of this dataset.
 
 # ============================================================================
 # EDGE CASES & DISAMBIGUATION
 # ============================================================================
 
 edge_cases:
-  
+
   multi_event_same_day:
     description: "Multiple different protests in same city on same day"
     rule: "Code as SEPARATE events IF different location, actors, or goals. Code as ONE if same location/actors/goals, different times."
     example: "Morning protest at city hall, evening march at courthouse → TWO EVENTS"
-  
+
   escalation_during_event:
     description: "Peaceful protest that escalates to violence"
-    rule: "If most participants remain peaceful → DEMONSTRATION. If majority escalates → RIOT. If small group breaks off → TWO EVENTS"
-    example: "March stays peaceful, 50 people break off and loot → Code march as DEMONSTRATION, looting as separate RIOT event"
-  
+    rule: "If most participants remain peaceful → DEMONSTRATION_MARCH. If majority escalates → RIOT. If small group breaks off → TWO EVENTS"
+    example: "March stays peaceful, 50 people break off and loot → code march as DEMONSTRATION_MARCH, looting as separate RIOT"
+
   ongoing_occupation:
     description: "Multi-day occupation"
-    rule: "Code as ONE OCCUPATION event if continuous. If broken up then resumed elsewhere, may be TWO events"
-  
+    rule: "Code as ONE OCCUPATION_SEIZURE event if continuous. If broken up then resumed elsewhere, may be TWO events"
+
   counter_protest:
     description: "Opposing groups protesting same topic or location"
-    rule: "If separated spatially/temporally → TWO EVENTS. If directly confronting → ONE CONFRONTATION event or TWO DEMONSTRATIONS with note about counter-protest"
+    rule: "If separated spatially/temporally → TWO EVENTS. If directly confronting → ONE CONFRONTATION event or TWO DEMONSTRATIONS with note"
 
-# ============================================================================
-# NON-EVENTS (Explicit Exclusions)
-# ============================================================================
+  ambiguous_news_framing:
+    description: "Article discusses protest but may be commentary, analysis, or retrospective"
+    rule: "If the protest action occurred in the past and the article is commentary → code the underlying event if details are present. If article is purely analytical → do not extract."
 
-non_events:
-  - description: "Political violence not targeting institutions"
-    example: "Individuals attack each other due to political disagreements, not protest"
-    reason: "Lacks collective public nature"
-  
-  - description: "Armed rebellion, terrorism, insurgency"
-    example: "Armed group attacks government targets"
-    reason: "Beyond scope of protest event analysis (see conflict datasets)"
-  
-  - description: "Sports/entertainment event with political participants"
-    example: "Political group goes to sports game"
-    reason: "No explicit protest element"
-  
-  - description: "Internal organizational meetings"
-    example: "Party meeting to plan campaign"
-    reason: "Not public protest action"
+  regional_organisation_protest:
+    description: "Protest targeting a regional body (AU, SADC, UN) rather than a national government"
+    rule: "Qualifies as a protest event if the action meets all minimum_criteria. Use the host country as 'country' field."
 
 # ============================================================================
 # CONFIDENCE THRESHOLDS EXPLAINED
@@ -280,47 +485,58 @@ confidence_guidance:
     meaning: "Clear case, unambiguous match to definition"
     action: "Use for analysis without hesitation"
     examples:
-      - "Text explicitly states 'the protest march' with thousands of people"
-      - "News headline 'workers strike demands wage increase'"
-  
+      - "Text explicitly states 'the protest march' with number of participants, location, date, and demands"
+      - "News headline 'workers strike demanding wage increase' with union name and specific demands"
+
   medium_confidence_0_65_to_0_84:
     meaning: "Reasonably clear but some ambiguity remains"
     action: "Use for analysis but flag in sensitivity analyses"
     examples:
-      - "Report of 'gathering' that sounds political but not explicit"
-      - "Implied organization but stated individually"
-  
+      - "Report of 'gathering' that sounds political but not fully explicit about demands"
+      - "Implied organization but stated informally"
+
   low_confidence_below_0_65:
-    meaning: "Significant ambiguity, could be multiple types"
+    meaning: "Significant ambiguity, could be multiple types or borderline non-event"
     action: "Exclude from main analysis OR code as 'uncertain' and analyze separately"
     examples:
       - "Brief mention with little context"
       - "Text could describe protest or other gathering"
+      - "Event in country outside target scope"
+
+  unknown_confidence:
+    meaning: "Model could not determine confidence (avoid using this — choose high/medium/low)"
+    action: "Treat as low confidence in analysis"
 
 # ============================================================================
-# QUALITY CONTROL QUESTIONS
+# QUALITY CONTROL CHECKLIST
 # ============================================================================
 
 qc_checklist:
-  - "Does the text explicitly mention the action (verb)? (e.g., 'marched', 'protested')"
-  - "Does the text indicate political motivation? (e.g., demands, grievances, claims)"
-  - "Can I identify minimum participants threshold? (≥2 for most types)"
-  - "Does the text specify location AND date?"
-  - "Is there any ambiguity that would lower confidence?"
-  - "Does this match NEGATIVE examples instead of POSITIVE examples?"
-  - "Would an expert protest scholar agree with this classification?"
+  mandatory:
+    - "Does the article explicitly report a REAL, PAST protest event (not a plan, proposal, or commentary)?"
+    - "Are ≥2 participants mentioned or clearly implied?"
+    - "Is there explicit political motivation, demand, or grievance?"
+    - "Does the event take place in public space or target a public audience?"
+    - "Is this action OUTSIDE normal institutional channels (not a conference, vote, or court proceeding)?"
+    - "Is the event NOT in the non_events list above?"
+  quality:
+    - "Can I identify the country AND at least approximate date?"
+    - "Does the event type match one of the six valid types?"
+    - "Would a protest event scholar agree this qualifies?"
+    - "Is confidence set to high/medium/low (not unknown)?"
 
 # ============================================================================
 # CODING RULES SUMMARY
 # ============================================================================
 
 general_rules:
-  1_primary_type: "Assign ONE primary event type per event"
-  2_confidence: "Provide confidence score reflecting certainty"
-  3_text_only: "Use only information in provided text; don't assume context"
+  1_primary_type: "Assign ONE primary event type per event (from the six valid keys)"
+  2_confidence: "Provide confidence score: high / medium / low — never 'unknown'"
+  3_text_only: "Use only information in provided text; do not infer or hallucinate"
   4_political: "All classifications require explicit or very clear political motivation"
-  5_peace_bias: "When uncertain, bias toward peaceful classification"
-  6_organization: "Protests require ≥2 people; distinction between organized vs. spontaneous matters"
-  7_location_temporal: "All events must have identifiable location and date"
+  5_peace_bias: "When uncertain between peaceful and violent, bias toward peaceful classification"
+  6_organization: "Protests require ≥2 people; note organized vs. spontaneous"
+  7_location_temporal: "All events must have identifiable country and approximate date"
   8_ambiguous_types: "If genuinely ambiguous between 2 types, choose more restrictive one"
-
+  9_non_event_gate: "Apply minimum_criteria check FIRST — if any disqualifier applies, return []"
+  10_african_scope: "Flag events outside African target countries with low confidence"

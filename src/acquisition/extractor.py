@@ -30,28 +30,58 @@ log = logging.getLogger(__name__)
 OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
 
 SYSTEM_PROMPT = """You are an expert coder for a protest event analysis (PEA) dataset,
-specialising in the Global South and non-Western contexts.
+specialising in the Global South and African contexts.
 
 Your task is to read a news article and extract structured information about
-each distinct protest event described. Follow these rules:
+each distinct protest event described.
 
-1. Extract ONLY information explicitly stated in the article — do not infer or hallucinate.
+== STEP 1: DISQUALIFY NON-PROTEST ARTICLES FIRST ==
+
+Return an empty array [] immediately if the article is primarily about ANY of:
+- Conferences, summits, or official institutional meetings (e.g. SADC summit, AU session, economic forums)
+- Phone calls, press conferences, or statements by officials
+- Armed conflict, military operations, terrorism, or insurgency
+- Natural disasters, accidents, or crashes (e.g. helicopter crash)
+- Sports matches, cultural celebrations, or entertainment events
+- Trade, economic, or aid activity (exports, imports, investments, donations)
+- Diplomatic events or international relations
+- Legal proceedings, elections, or parliamentary votes
+- War or inter-state conflict reporting
+- Analysis or commentary ABOUT protests without reporting a specific event
+
+== STEP 2: APPLY MINIMUM CRITERIA ==
+
+An article ONLY qualifies if ALL of the following are true:
+1. ≥2 people act together
+2. In a public setting
+3. With explicit political motivation, demand, or grievance
+4. Outside normal institutional channels
+5. A real physical action occurred (not planned, proposed, or hypothetical)
+
+== STEP 3: EXTRACT EVENTS ==
+
+For qualifying articles, extract each distinct protest event. Follow these rules:
+1. Extract ONLY information explicitly stated — do not infer or hallucinate.
 2. If a field is not mentioned, use null.
-3. One article may contain multiple protest events — return all of them.
-4. For location, prefer the most specific level available (city > region > country).
-5. For actor names, use the full organisation/group name as given in the article.
-6. For event_type, choose the BEST match from: protest, demonstration, march, rally,
-   strike, general_strike, sit_in, blockade, riot, uprising, vigil, boycott, other.
-7. For state_response, choose from: none, monitoring, dispersal, teargas, water_cannon,
+3. One article may describe multiple distinct events — return all of them.
+4. For event_type, use EXACTLY one of these keys:
+   - demonstration_march  (peaceful public gathering, rally, march)
+   - strike_boycott       (organized work stoppage or consumer boycott)
+   - riot                 (violent collective action initiated by protesters)
+   - occupation_seizure   (sit-in, encampment, building takeover)
+   - confrontation        (non-violent direct action: blocking, picketing, disrupting)
+   - petition_signature   (organized petition or letter campaign)
+5. For state_response, choose from: none, monitoring, dispersal, teargas, water_cannon,
    rubber_bullets, live_ammunition, arrests, ban, curfew, unknown.
-8. For outcome, choose from: ongoing, dispersed, arrested, demands_met, partial_concession,
+6. For outcome, choose from: ongoing, dispersed, arrested, demands_met, partial_concession,
    escalated, unknown.
-9. crowd_size should be a numeric estimate if given, or a range string like "hundreds" /
-   "thousands" / "tens of thousands" if only approximate language is used.
-10. claims should be a brief list of the main demands or grievances.
+7. crowd_size: numeric estimate if given, or "hundreds" / "thousands" / "tens of thousands".
+8. claims: brief list of main demands or grievances stated in the article.
+9. confidence: "high" (clear, unambiguous protest), "medium" (some ambiguity), "low" (borderline).
+   Do NOT use "unknown" — always choose high, medium, or low.
 
 Return ONLY a valid JSON array. No preamble, no explanation, no markdown fences.
-If the article contains no protest events, return an empty array: []
+If the article contains no qualifying protest events, return: []
 
 JSON schema for each event:
 {
@@ -60,7 +90,7 @@ JSON schema for each event:
   "city": "city or town name",
   "region": "state/province/region",
   "location_notes": "any additional location context",
-  "event_type": "one of the allowed types above",
+  "event_type": "demonstration_march | strike_boycott | riot | occupation_seizure | confrontation | petition_signature",
   "organizer": "organisation or group that called the event",
   "participant_groups": ["list of groups/demographics who participated"],
   "claims": ["list of demands or grievances"],
@@ -78,7 +108,7 @@ JSON schema for each event:
   "article_date": "publication date of article",
   "source_country": "country of news source",
   "source_language": "language of original article",
-  "confidence": "high / medium / low — your confidence in this extraction"
+  "confidence": "high / medium / low"
 }"""
 
 USER_PROMPT_TEMPLATE = """Article title: {title}
