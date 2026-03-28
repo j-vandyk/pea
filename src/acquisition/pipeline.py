@@ -76,13 +76,14 @@ def run_pipeline(
     output_dir: Path,
     max_articles: int = 100,
     translate: bool = True,
-    claude_model: str = "claude-sonnet-4-6",
-    claude_api_key: str | None = None,
+    provider: str = "claude",
+    model: str | None = None,
+    api_key: str | None = None,
     upload_to: str | None = None,
 ):
-    log.info("=== Protest Event Analysis Pipeline (codebook v2.1) ===")
+    log.info("=== Protest Event Analysis Pipeline (codebook v2.2) ===")
     log.info(f"Query: '{query}' | Countries: {countries} | Days back: {days}")
-    log.info(f"LLM: {claude_model} (Anthropic Claude API)")
+    log.info(f"LLM provider: {provider} | model: {model or 'default'}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -122,8 +123,9 @@ def run_pipeline(
     checkpoint_path = str(output_dir / "checkpoint.txt")
     events, failures = extract_events(
         scraped,
-        model=claude_model,
-        api_key=claude_api_key,
+        model=model,
+        api_key=api_key,
+        provider=provider,
         checkpoint_path=checkpoint_path,
     )
     log.info(f"Extracted {len(events)} protest events ({len(failures)} extraction failures)")
@@ -160,10 +162,12 @@ def main():
                         help="Directory to write results (default: data/raw/)")
     parser.add_argument("--no-translate", action="store_true",
                         help="Skip translation step")
-    parser.add_argument("--claude-model", default="claude-sonnet-4-6",
-                        help="Claude model ID (default: claude-sonnet-4-6)")
-    parser.add_argument("--claude-api-key", default=None,
-                        help="Anthropic API key (defaults to ANTHROPIC_API_KEY env var)")
+    parser.add_argument("--provider", default="claude", choices=["claude", "openai", "azure"],
+                        help="LLM provider: 'claude' (default), 'openai', or 'azure' (Azure AI Foundry)")
+    parser.add_argument("--model", default=None,
+                        help="Model ID — defaults to claude-sonnet-4-6 (claude) or gpt-4o-mini (openai)")
+    parser.add_argument("--api-key", default=None,
+                        help="API key — defaults to ANTHROPIC_API_KEY or OPENAI_API_KEY env var")
     parser.add_argument("--resume", action="store_true",
                         help="Resume from checkpoint.txt — skip already-processed URLs")
     parser.add_argument("--upload-to", default=None,
@@ -184,8 +188,9 @@ def main():
         output_dir=Path(args.output_dir),
         max_articles=args.max_articles,
         translate=not args.no_translate,
-        claude_model=args.claude_model,
-        claude_api_key=args.claude_api_key,
+        provider=args.provider,
+        model=args.model,
+        api_key=args.api_key,
         upload_to=args.upload_to,
     )
 

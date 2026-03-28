@@ -2,7 +2,11 @@
 LLM Event Extraction Module
 =============================
 Extracts structured protest event fields from news article text
-using the Claude API (Anthropic).
+using Claude (Anthropic) or OpenAI as the LLM backend.
+
+Supported providers:
+  - claude  (default) — uses Anthropic API, ANTHROPIC_API_KEY env var
+  - openai            — uses OpenAI API, OPENAI_API_KEY env var
 
 Codebook version: 2.2
 Follows the meta-codebook schema, extracting:
@@ -163,6 +167,89 @@ def _call_claude(
         return None
 
 
+def _call_openai(
+    system: str,
+    user: str,
+    model: str,
+    api_key: str,
+    timeout: int = 180,
+) -> Optional[str]:
+    """
+    Call the OpenAI API with system + user messages.
+    Returns the assistant response text, or None on failure.
+    """
+    try:
+        from openai import OpenAI, APIStatusError
+        client = OpenAI(api_key=api_key, timeout=timeout)
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=4096,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        return response.choices[0].message.content
+    except APIStatusError as e:
+        log.warning(f"OpenAI API error {e.status_code}: {e.message}")
+        return None
+    except Exception as e:
+        log.warning(f"OpenAI call failed: {e}")
+        return None
+
+
+def _call_azure(
+    system: str,
+    user: str,
+    model: str,
+    api_key: str,
+    timeout: int = 180,
+) -> Optional[str]:
+    """
+    Call Azure AI Foundry via its OpenAI-compatible endpoint.
+    The model name is the deployment name in your Foundry project
+    (e.g. 'gpt-4o-mini', 'claude-sonnet-4-6', 'gpt-5').
+    Reads AZURE_OPENAI_ENDPOINT from the environment.
+    Returns the assistant response text, or None on failure.
+    """
+    try:
+        from openai import OpenAI, APIStatusError
+        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+        if not endpoint:
+            raise ValueError("AZURE_OPENAI_ENDPOINT env var is not set")
+        client = OpenAI(base_url=endpoint, api_key=api_key, timeout=timeout)
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=4096,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        return response.choices[0].message.content
+    except APIStatusError as e:
+        log.warning(f"Azure API error {e.status_code}: {e.message}")
+        return None
+    except Exception as e:
+        log.warning(f"Azure call failed: {e}")
+        return None
+
+
+def _call_llm(
+    system: str,
+    user: str,
+    model: str,
+    api_key: str,
+    provider: str = "claude",
+) -> Optional[str]:
+    """Dispatch to the appropriate LLM backend."""
+    if provider == "openai":
+        return _call_openai(system=system, user=user, model=model, api_key=api_key)
+    if provider == "azure":
+        return _call_azure(system=system, user=user, model=model, api_key=api_key)
+    return _call_claude(system=system, user=user, model=model, api_key=api_key)
+
+
 def _clean_json(text: str) -> str:
     """Remove common LLM JSON formatting issues."""
     # Strip markdown code fences
@@ -213,11 +300,12 @@ def extract_from_article(
     article: dict,
     model: str,
     api_key: str,
+    provider: str = "claude",
     max_retries: int = 2,
 ) -> Optional[list[dict]]:
     """
     Run LLM extraction on a single article.
-    Returns list of extracted event dicts.
+    Returns list of extracted event dicts, or None on total failure.
     """
     text = article.get("text_en") or article.get("text") or ""
 
@@ -225,7 +313,6 @@ def extract_from_article(
         log.debug(f"Skipping article with insufficient text: {article.get('url', '')[:60]}")
         return []
 
-    # Claude handles a wide range of languages; truncate generously
     truncated_text = text[:12000]
 
     prompt = USER_PROMPT_TEMPLATE.format(
@@ -238,15 +325,16 @@ def extract_from_article(
     )
 
     for attempt in range(max_retries + 1):
-        raw = _call_claude(
+        raw = _call_llm(
             system=SYSTEM_PROMPT,
             user=prompt,
             model=model,
             api_key=api_key,
+            provider=provider,
         )
 
         if raw is None:
-            log.warning(f"Claude returned nothing (attempt {attempt + 1})")
+            log.warning(f"LLM returned nothing (attempt {attempt + 1})")
             if attempt < max_retries:
                 time.sleep(2 ** attempt)
             continue
@@ -272,20 +360,39 @@ def extract_from_article(
     return None
 
 
+_PROVIDER_ENV_VARS = {
+    "claude": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "azure": "AZURE_FOUNDRY_API_KEY",
+}
+
+_PROVIDER_DEFAULT_MODELS = {
+    "claude": "claude-sonnet-4-6",
+    "openai": "gpt-4o-mini",
+    "azure": "gpt-4o-mini",
+}
+
+
 def extract_events(
     articles: list[dict],
-    model: str = "claude-sonnet-4-6",
+    model: Optional[str] = None,
     api_key: Optional[str] = None,
+    provider: str = "claude",
     rate_limit_delay: float = 0.5,
     checkpoint_path: Optional[str] = None,
 ) -> tuple[list[dict], list[dict]]:
     """
-    Run LLM extraction across all scraped articles using Claude.
+    Run LLM extraction across all scraped articles.
 
     Args:
         articles: list of article dicts with 'text_en' field
-        model: Claude model ID (default: claude-sonnet-4-6)
-        api_key: Anthropic API key (defaults to ANTHROPIC_API_KEY env var)
+        model: model ID / deployment name — defaults per provider:
+               claude → claude-sonnet-4-6, openai/azure → gpt-4o-mini.
+               For azure, this is the Foundry deployment name (e.g. 'gpt-4o-mini',
+               'claude-sonnet-4-6', 'gpt-5' — whatever is deployed in your project).
+        api_key: API key — defaults to ANTHROPIC_API_KEY, OPENAI_API_KEY, or
+                 AZURE_FOUNDRY_API_KEY env var depending on provider
+        provider: 'claude' (default), 'openai', or 'azure'
         rate_limit_delay: seconds between requests (polite pacing)
         checkpoint_path: path to checkpoint file; processed URLs are skipped
                          on resume and appended after each successful article
@@ -294,11 +401,19 @@ def extract_events(
         (events, failures) — flat list of extracted event dicts, and list of
         articles that failed extraction after all retries.
     """
-    resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    if provider not in _PROVIDER_ENV_VARS:
+        raise ValueError(f"Unknown provider '{provider}'. Choose 'claude', 'openai', or 'azure'.")
+
+    resolved_model = model or _PROVIDER_DEFAULT_MODELS[provider]
+    env_var = _PROVIDER_ENV_VARS[provider]
+    resolved_key = api_key or os.environ.get(env_var, "")
     if not resolved_key:
         raise ValueError(
-            "No Anthropic API key provided. Set ANTHROPIC_API_KEY or pass api_key=."
+            f"No API key for provider '{provider}'. "
+            f"Set {env_var} env var or pass api_key=."
         )
+
+    log.info(f"LLM provider: {provider} | model: {resolved_model}")
 
     # Load already-processed URLs if resuming
     done_urls: set[str] = set()
@@ -323,7 +438,7 @@ def extract_events(
 
         log.info(f"[{i+1}/{len(articles)}] Extracting from: {url_display}...")
 
-        events = extract_from_article(article, model=model, api_key=resolved_key)
+        events = extract_from_article(article, model=resolved_model, api_key=resolved_key, provider=provider)
 
         if events:
             log.info(f"  ✓ Found {len(events)} event(s)")
