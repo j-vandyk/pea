@@ -17,6 +17,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -159,8 +160,8 @@ def save_results(
     events: list[dict],
     output_dir: Path,
     run_id: str,
-    failures: list[dict] | None = None,
-    upload_to: str | None = None,
+    failures: Optional[list] = None,
+    upload_to: Optional[str] = None,
 ) -> Path:
     """
     Save events to JSONL, CSV, and a run summary file.

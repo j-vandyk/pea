@@ -29,6 +29,7 @@ import os
 import sys
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 from src.acquisition.gdelt_discovery import discover_articles
 from src.acquisition.scraper import scrape_articles
@@ -77,9 +78,9 @@ def run_pipeline(
     max_articles: int = 100,
     translate: bool = True,
     provider: str = "claude",
-    model: str | None = None,
-    api_key: str | None = None,
-    upload_to: str | None = None,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    upload_to: Optional[str] = None,
 ):
     log.info("=== Protest Event Analysis Pipeline (codebook v2.2) ===")
     log.info(f"Query: '{query}' | Countries: {countries} | Days back: {days}")
