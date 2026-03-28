@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Optional
 
 import anthropic
@@ -276,6 +277,7 @@ def extract_events(
     model: str = "claude-sonnet-4-6",
     api_key: Optional[str] = None,
     rate_limit_delay: float = 0.5,
+    checkpoint_path: Optional[str] = None,
 ) -> tuple[list[dict], list[dict]]:
     """
     Run LLM extraction across all scraped articles using Claude.
@@ -285,6 +287,8 @@ def extract_events(
         model: Claude model ID (default: claude-sonnet-4-6)
         api_key: Anthropic API key (defaults to ANTHROPIC_API_KEY env var)
         rate_limit_delay: seconds between requests (polite pacing)
+        checkpoint_path: path to checkpoint file; processed URLs are skipped
+                         on resume and appended after each successful article
 
     Returns:
         (events, failures) — flat list of extracted event dicts, and list of
@@ -296,14 +300,28 @@ def extract_events(
             "No Anthropic API key provided. Set ANTHROPIC_API_KEY or pass api_key=."
         )
 
+    # Load already-processed URLs if resuming
+    done_urls: set[str] = set()
+    if checkpoint_path:
+        cp = Path(checkpoint_path)
+        if cp.exists():
+            done_urls = set(cp.read_text().splitlines())
+            log.info(f"Checkpoint: skipping {len(done_urls)} already-processed URLs")
+
     all_events = []
     failures = []
     processed = 0
     skipped = 0
 
     for i, article in enumerate(articles):
-        url = article.get("url", "")[:70]
-        log.info(f"[{i+1}/{len(articles)}] Extracting from: {url}...")
+        url = article.get("url", "")
+        url_display = url[:70]
+
+        if url in done_urls:
+            log.info(f"[{i+1}/{len(articles)}] Skipping (checkpointed): {url_display}...")
+            continue
+
+        log.info(f"[{i+1}/{len(articles)}] Extracting from: {url_display}...")
 
         events = extract_from_article(article, model=model, api_key=resolved_key)
 
@@ -317,14 +335,19 @@ def extract_events(
             skipped += 1
         else:
             # None = extraction failed after all retries
-            log.warning(f"  ✗ Extraction failed: {url}")
+            log.warning(f"  ✗ Extraction failed: {url_display}")
             failures.append({
-                "url": article.get("url", ""),
+                "url": url,
                 "title": article.get("title", ""),
                 "reason": "extraction_failed",
                 "lang": article.get("text_lang", "unknown"),
             })
             skipped += 1
+
+        # Write to checkpoint after every article (success or no-events; not failures)
+        if checkpoint_path and events is not None:
+            with open(checkpoint_path, "a") as f:
+                f.write(url + "\n")
 
         if i < len(articles) - 1:
             time.sleep(rate_limit_delay)

@@ -45,6 +45,10 @@ pyyaml==6.0
 tqdm==4.66.0
 requests==2.31.0
 
+# Cloud Storage (optional — install whichever provider you use)
+# boto3>=1.34.0              # AWS S3 upload (--upload-to s3://...)
+# azure-storage-blob>=12.19.0  # Azure Blob upload (--upload-to az://...)
+
 # Development & Notebooks
 jupyter==1.0.0
 ipython==8.19.0

@@ -14,6 +14,7 @@ v2.1 additions:
 import csv
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -106,15 +107,65 @@ def flatten_for_csv(event: dict) -> dict:
     return row
 
 
+def _upload_outputs(destination: str, paths: list[Path]) -> None:
+    """
+    Upload a list of local files to cloud storage.
+
+    destination format:
+      's3://bucket/prefix'   — AWS S3 (requires boto3, AWS credentials in env)
+      'az://container/prefix' — Azure Blob (requires azure-storage-blob,
+                                AZURE_STORAGE_CONNECTION_STRING in env)
+    """
+    if destination.startswith("s3://"):
+        try:
+            import boto3
+        except ImportError:
+            raise ImportError("boto3 is required for S3 upload: pip install boto3")
+        bucket, prefix = destination[5:].split("/", 1)
+        s3 = boto3.client("s3")
+        for p in paths:
+            key = f"{prefix}/{p.name}"
+            s3.upload_file(str(p), bucket, key)
+            log.info(f"Uploaded to s3://{bucket}/{key}")
+
+    elif destination.startswith("az://"):
+        try:
+            from azure.storage.blob import BlobServiceClient
+        except ImportError:
+            raise ImportError(
+                "azure-storage-blob is required for Azure upload: "
+                "pip install azure-storage-blob"
+            )
+        conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+        if not conn_str:
+            raise ValueError("AZURE_STORAGE_CONNECTION_STRING env var not set")
+        container, prefix = destination[5:].split("/", 1)
+        client = BlobServiceClient.from_connection_string(conn_str)
+        for p in paths:
+            blob_name = f"{prefix}/{p.name}"
+            blob = client.get_blob_client(container, blob_name)
+            with open(p, "rb") as f:
+                blob.upload_blob(f, overwrite=True)
+            log.info(f"Uploaded to az://{container}/{blob_name}")
+
+    else:
+        raise ValueError(
+            f"Unsupported upload destination '{destination}'. "
+            "Use 's3://bucket/prefix' or 'az://container/prefix'."
+        )
+
+
 def save_results(
     events: list[dict],
     output_dir: Path,
     run_id: str,
     failures: list[dict] | None = None,
+    upload_to: str | None = None,
 ) -> Path:
     """
     Save events to JSONL, CSV, and a run summary file.
     If failures are provided, writes them to failures_{run_id}.jsonl.
+    If upload_to is set, uploads all output files to S3 or Azure Blob after writing.
 
     Derives turmoil_level for each event before writing.
     Returns the path to the output directory.
@@ -199,6 +250,15 @@ def save_results(
         print(f"  {level:30s} {count}")
     print(f"\nOutput: {output_dir}")
     print("="*60 + "\n")
+
+    # Upload to cloud storage if requested
+    if upload_to:
+        upload_paths = [jsonl_path, csv_path, cumulative_path, summary_path]
+        if failures_path:
+            upload_paths.append(failures_path)
+        log.info(f"Uploading {len(upload_paths)} files to {upload_to} ...")
+        _upload_outputs(upload_to, upload_paths)
+        log.info("Cloud upload complete")
 
     return output_dir
 

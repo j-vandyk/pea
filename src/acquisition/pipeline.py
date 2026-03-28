@@ -57,6 +57,18 @@ log = logging.getLogger("pipeline")
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[2] / "data" / "raw"
 
 
+def _load_checkpoint(output_dir: Path) -> set[str]:
+    """Return set of URLs already processed in a previous run."""
+    cp = output_dir / "checkpoint.txt"
+    return set(cp.read_text().splitlines()) if cp.exists() else set()
+
+
+def _save_checkpoint(output_dir: Path, url: str) -> None:
+    """Append a processed URL to the checkpoint file."""
+    with open(output_dir / "checkpoint.txt", "a") as f:
+        f.write(url + "\n")
+
+
 def run_pipeline(
     query: str,
     countries: list,
@@ -66,6 +78,7 @@ def run_pipeline(
     translate: bool = True,
     claude_model: str = "claude-sonnet-4-6",
     claude_api_key: str | None = None,
+    upload_to: str | None = None,
 ):
     log.info("=== Protest Event Analysis Pipeline (codebook v2.1) ===")
     log.info(f"Query: '{query}' | Countries: {countries} | Days back: {days}")
@@ -106,16 +119,18 @@ def run_pipeline(
 
     # Stage 4: LLM Extraction via Claude
     log.info("--- Stage 4: LLM Event Extraction (Claude API) ---")
+    checkpoint_path = str(output_dir / "checkpoint.txt")
     events, failures = extract_events(
         scraped,
         model=claude_model,
         api_key=claude_api_key,
+        checkpoint_path=checkpoint_path,
     )
     log.info(f"Extracted {len(events)} protest events ({len(failures)} extraction failures)")
 
     # Stage 5: Storage
     log.info("--- Stage 5: Saving Results ---")
-    out_path = save_results(events, output_dir=output_dir, run_id=run_id, failures=failures)
+    out_path = save_results(events, output_dir=output_dir, run_id=run_id, failures=failures, upload_to=upload_to)
     log.info(f"Results saved to {out_path}")
 
     log.info("=== Pipeline complete ===")
@@ -149,7 +164,18 @@ def main():
                         help="Claude model ID (default: claude-sonnet-4-6)")
     parser.add_argument("--claude-api-key", default=None,
                         help="Anthropic API key (defaults to ANTHROPIC_API_KEY env var)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from checkpoint.txt — skip already-processed URLs")
+    parser.add_argument("--upload-to", default=None,
+                        help="Upload outputs after run: 's3://bucket/prefix' or 'az://container/prefix'")
     args = parser.parse_args()
+
+    # Clear checkpoint on fresh run
+    output_dir = Path(args.output_dir)
+    checkpoint = output_dir / "checkpoint.txt"
+    if not args.resume and checkpoint.exists():
+        checkpoint.unlink()
+        log.info("Fresh run — cleared existing checkpoint")
 
     run_pipeline(
         query=args.query,
@@ -160,6 +186,7 @@ def main():
         translate=not args.no_translate,
         claude_model=args.claude_model,
         claude_api_key=args.claude_api_key,
+        upload_to=args.upload_to,
     )
 
 
