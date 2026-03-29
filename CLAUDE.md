@@ -2,11 +2,12 @@
 
 ## Project Overview
 
-Protest Event Analysis (PEA) pipeline. Discovers news articles via GDELT DOC 2.0 API, scrapes + translates, extracts structured protest events via Claude API (Anthropic), and stores results as JSONL/CSV.
+Protest Event Analysis (PEA) pipeline. Discovers news articles via GDELT DOC 2.0 API, scrapes + translates, extracts structured protest events via an LLM backend, and stores results as JSONL/CSV.
 
 **Codebook version:** 2.2 (Halterman & Keith 2025, Type III)
-**LLM backend:** `claude-sonnet-4-6` via `anthropic` SDK
+**LLM backend:** Configurable via `--provider` flag (see below)
 **Target geography:** African countries (NG, ZA, UG, DZ)
+**Python:** 3.9 (venv at `venv/`) — use `X | Y` union syntax requires 3.10+, use `Optional[X]` instead
 
 ## Key Files
 
@@ -14,21 +15,116 @@ Protest Event Analysis (PEA) pipeline. Discovers news articles via GDELT DOC 2.0
 |------|---------|
 | `configs/protest_codebook.yaml` | Codebook v2.2 — event types, non-event disqualifiers, minimum criteria |
 | `src/acquisition/pipeline.py` | Entry point — 5-stage pipeline (discover → scrape → translate → extract → store) |
-| `src/acquisition/extractor.py` | LLM extraction — Claude API, SYSTEM_PROMPT with two-step disqualifier gate |
+| `src/acquisition/extractor.py` | LLM extraction — multi-provider, SYSTEM_PROMPT with two-step disqualifier gate |
 | `src/acquisition/storage.py` | Output — JSONL, CSV, run summary JSON, `_derive_turmoil_level()` |
+| `src/acquisition/gdelt_discovery.py` | GDELT DOC 2.0 API discovery — note: multi-country queries use keyword matching, not strict source filtering |
+| `Dockerfile` | Multi-stage build using `requirements-core.txt` (no GPU packages) |
+| `.github/workflows/docker.yml` | CI — builds and pushes Docker image to ACR on push to `main` |
 
 ## Environment
 
-- Requires `ANTHROPIC_API_KEY` environment variable (or `.env` file once dotenv is activated)
-- Python virtualenv at `venv/` — use `venv/bin/python3` for manual runs
+`.env` file (never commit) — template:
+```
+ANTHROPIC_API_KEY=        # --provider claude
+OPENAI_API_KEY=           # --provider openai
+AZURE_FOUNDRY_API_KEY=    # --provider azure
+AZURE_OPENAI_ENDPOINT=    # --provider azure (e.g. https://<resource>.openai.azure.com/openai/v1)
+AZURE_STORAGE_CONNECTION_STRING=  # --upload-to az://...
+```
+
+Install missing packages into the venv as needed:
+```bash
+venv/bin/pip install anthropic openai python-dotenv
+```
+
+## Running the Pipeline
+
+```bash
+# Azure AI Foundry (active fallback while Anthropic account is being recovered)
+venv/bin/python -m src.acquisition.pipeline \
+  --provider azure \
+  --model gpt-4o-mini \
+  --countries ZA \
+  --days 30 \
+  --max-articles 100
+
+# Claude (default, once API key is restored)
+venv/bin/python -m src.acquisition.pipeline \
+  --provider claude \
+  --countries NG,ZA,UG,DZ \
+  --days 7
+
+# Resume after a crash
+venv/bin/python -m src.acquisition.pipeline --provider azure --resume
+
+# Upload outputs to Azure Blob after run
+venv/bin/python -m src.acquisition.pipeline --provider azure \
+  --upload-to az://my-container/pea/runs
+```
+
+**Provider defaults:**
+| Provider | Default model | API key env var |
+|---|---|---|
+| `claude` | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
+| `openai` | `gpt-4o-mini` | `OPENAI_API_KEY` |
+| `azure` | `gpt-4o-mini` | `AZURE_FOUNDRY_API_KEY` + `AZURE_OPENAI_ENDPOINT` |
+
+For `--provider azure`, `--model` is the **deployment name** in your Azure AI Foundry project (must be deployed first in the portal). Any model available in Foundry can be used (e.g. `gpt-4o`, `claude-sonnet-4-6`, `gpt-5`).
+
+## Pipeline Outputs
+
+All written to `data/raw/`:
+
+| File | Contents |
+|---|---|
+| `events_{run_id}.jsonl` | Extracted protest events (primary output) |
+| `events_{run_id}.csv` | Same events, flattened for spreadsheet |
+| `summary_{run_id}.json` | Run metadata: counts by country, type, turmoil level |
+| `failures_{run_id}.jsonl` | Articles that failed extraction after all retries |
+| `all_events.jsonl` | Cumulative append across all runs |
+| `checkpoint.txt` | URLs processed — used by `--resume` |
+
+## Known GDELT Discovery Behaviour
+
+- Multi-country queries (`--countries NG,ZA,UG,DZ`) append country names as keywords rather than using GDELT's `sourcecountry` filter (which only accepts one country). This causes noise — articles mentioning a country in passing (e.g. US news about South Africa) get returned.
+- **Recommended for testing:** use a single country (`--countries ZA`) and a longer window (`--days 30`) for higher-quality results.
+- The LLM disqualifier gate correctly rejects non-protest articles — a run with 0 events extracted but 44 "no events found" is the system working as intended, not a bug.
 
 ---
 
-## Production-Readiness Improvements (Planned)
+## Production-Readiness Improvements (All Implemented ✅)
 
-The pipeline is functionally solid (5-stage GDELT → scrape → translate → Claude → store). Error handling, retries, and data output are already well-implemented. The gaps are in the DevOps/infra layer: no container, no cloud storage, no structured logs, no checkpoint capability.
+All seven improvements are complete as of 2026-03-28.
 
-All seven improvements below are independent and can be done in any order. **Recommended implementation order is listed at the end.**
+| # | Improvement | Status |
+|---|---|---|
+| 1 | Dockerfile + .dockerignore | ✅ |
+| 2 | Activate python-dotenv | ✅ |
+| 3 | Structured JSON logging | ✅ |
+| 4 | Cloud storage upload (S3 / Azure Blob) | ✅ |
+| 5 | Checkpoint / resume for long runs | ✅ |
+| 6 | Dead-letter file for failed articles | ✅ |
+| 7 | GitHub Actions Docker build + push to ACR | ✅ |
+
+**Additional (beyond original plan):**
+- `--provider` flag: `claude`, `openai`, `azure` — switchable without code changes
+- `--model` flag: explicit model/deployment name override
+- Python 3.9 compatibility fixes (`Optional[X]` instead of `X | None`)
+
+---
+
+## Pending Infrastructure (not yet set up)
+
+| Item | Needed for |
+|---|---|
+| Anthropic API key recovery | `--provider claude` |
+| Azure Container Registry (ACR) + GitHub Secrets | Docker CI workflow |
+| Azure Storage Account | `--upload-to az://...` |
+| ACLED API token | Validation notebook |
+
+---
+
+## Production-Readiness Detail
 
 ---
 

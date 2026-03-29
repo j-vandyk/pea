@@ -75,6 +75,7 @@ For qualifying articles, extract each distinct protest event. Follow these rules
 2. If a field is not mentioned, use null.
 3. One article may describe multiple distinct events — return all of them.
 4. For location, prefer the most specific level available (city > region > country).
+   If the article names a specific venue, landmark, or neighbourhood, extract it into "venue".
 5. For actor names, use the full organisation/group name as given in the article.
 6. For event_type, use EXACTLY one of these keys:
    - demonstration_march  (peaceful public gathering, rally, march)
@@ -105,6 +106,7 @@ JSON schema for each event:
   "country": "country name",
   "city": "city or town name",
   "region": "state/province/region",
+  "venue": "specific named location within the city if mentioned (e.g. 'Lekki Toll Gate', 'Parliament Square', 'University of Lagos')",
   "location_notes": "any additional location context",
   "event_type": "one of the 8 allowed keys above",
   "organizer": "organisation or group that called the event",
@@ -229,6 +231,9 @@ def _call_azure(
         return response.choices[0].message.content
     except APIStatusError as e:
         log.warning(f"Azure API error {e.status_code}: {e.message}")
+        # Surface content filter hits with a sentinel so callers can skip retries
+        if e.status_code == 400 and "content_filter" in str(e.message):
+            return "__CONTENT_FILTERED__"
         return None
     except Exception as e:
         log.warning(f"Azure call failed: {e}")
@@ -333,6 +338,10 @@ def extract_from_article(
             provider=provider,
         )
 
+        if raw == "__CONTENT_FILTERED__":
+            log.warning(f"Content filtered by Azure policy (violence:medium) — skipping retries")
+            return None
+
         if raw is None:
             log.warning(f"LLM returned nothing (attempt {attempt + 1})")
             if attempt < max_retries:
@@ -378,7 +387,7 @@ def extract_events(
     model: Optional[str] = None,
     api_key: Optional[str] = None,
     provider: str = "claude",
-    rate_limit_delay: float = 0.5,
+    rate_limit_delay: float = 1.5,
     checkpoint_path: Optional[str] = None,
 ) -> tuple[list[dict], list[dict]]:
     """

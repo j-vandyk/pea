@@ -31,8 +31,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
-from src.acquisition.gdelt_discovery import discover_articles
+import src.acquisition.gdelt_discovery as _gdelt
+import src.acquisition.bbc_discovery as _bbc
 from src.acquisition.scraper import scrape_articles
+from src.acquisition.geocoder import geocode_events
 from src.acquisition.translator import translate_articles
 from src.acquisition.extractor import extract_events
 from src.acquisition.storage import save_results
@@ -81,20 +83,49 @@ def run_pipeline(
     model: Optional[str] = None,
     api_key: Optional[str] = None,
     upload_to: Optional[str] = None,
+    source: str = "gdelt",
+    geocode: bool = True,
 ):
     log.info("=== Protest Event Analysis Pipeline (codebook v2.2) ===")
     log.info(f"Query: '{query}' | Countries: {countries} | Days back: {days}")
-    log.info(f"LLM provider: {provider} | model: {model or 'default'}")
+    log.info(f"LLM provider: {provider} | model: {model or 'default'} | source: {source}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
     # Stage 1: Discovery
-    log.info("--- Stage 1: GDELT Discovery ---")
-    articles = discover_articles(
-        query=query, countries=countries, days=days, max_results=max_articles
-    )
-    log.info(f"Discovered {len(articles)} candidate articles")
+    articles = []
+
+    if source in ("gdelt", "both"):
+        log.info("--- Stage 1a: GDELT Discovery ---")
+        gdelt_articles = _gdelt.discover_articles(
+            query=query, countries=countries, days=days, max_results=max_articles
+        )
+        log.info(f"GDELT: {len(gdelt_articles)} candidate articles")
+        articles.extend(gdelt_articles)
+
+    if source in ("bbc", "both"):
+        log.info("--- Stage 1b: BBC Monitoring Discovery ---")
+        bbc_articles = _bbc.discover_articles(
+            query=query, countries=countries, days=days,
+            max_results=max_articles,
+            fetch_full_text=True,
+        )
+        log.info(f"BBC Monitoring: {len(bbc_articles)} candidate articles")
+        articles.extend(bbc_articles)
+
+    # Deduplicate by URL when using both sources
+    if source == "both":
+        seen = set()
+        deduped = []
+        for a in articles:
+            if a["url"] not in seen:
+                seen.add(a["url"])
+                deduped.append(a)
+        log.info(f"After dedup: {len(deduped)} articles ({len(articles) - len(deduped)} duplicates removed)")
+        articles = deduped
+
+    log.info(f"Discovered {len(articles)} candidate articles total")
 
     if not articles:
         log.warning("No articles found. Try broadening your query or country list.")
@@ -130,6 +161,11 @@ def run_pipeline(
         checkpoint_path=checkpoint_path,
     )
     log.info(f"Extracted {len(events)} protest events ({len(failures)} extraction failures)")
+
+    # Stage 4.5: Geocoding
+    if geocode and events:
+        log.info("--- Stage 4.5: Geocoding ---")
+        events = geocode_events(events)
 
     # Stage 5: Storage
     log.info("--- Stage 5: Saving Results ---")
@@ -169,6 +205,10 @@ def main():
                         help="Model ID — defaults to claude-sonnet-4-6 (claude) or gpt-4o-mini (openai)")
     parser.add_argument("--api-key", default=None,
                         help="API key — defaults to ANTHROPIC_API_KEY or OPENAI_API_KEY env var")
+    parser.add_argument("--source", default="gdelt", choices=["gdelt", "bbc", "both"],
+                        help="Discovery source: 'gdelt' (default), 'bbc' (BBC Monitoring), or 'both'")
+    parser.add_argument("--no-geocode", action="store_true",
+                        help="Skip geocoding step (Nominatim OSM)")
     parser.add_argument("--resume", action="store_true",
                         help="Resume from checkpoint.txt — skip already-processed URLs")
     parser.add_argument("--upload-to", default=None,
@@ -193,6 +233,8 @@ def main():
         model=args.model,
         api_key=args.api_key,
         upload_to=args.upload_to,
+        source=args.source,
+        geocode=not args.no_geocode,
     )
 
 

@@ -182,6 +182,12 @@ def scrape_articles(
         if not url:
             continue
 
+        # Skip articles that already have text (e.g. pre-populated by BBC Monitoring)
+        if article.get("text"):
+            log.info(f"[{i+1}/{len(articles)}] Skipping (text pre-populated): {url[:80]}")
+            success += 1
+            continue
+
         log.info(f"[{i+1}/{len(articles)}] Scraping: {url[:80]}...")
 
         text = scrape_article(url, session)
