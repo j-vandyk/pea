@@ -14,8 +14,10 @@ v2.1 additions:
 import csv
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +27,11 @@ CSV_COLUMNS = [
     "country",
     "city",
     "region",
+    "venue",
     "location_notes",
+    "latitude",
+    "longitude",
+    "geo_accuracy",
     "event_type",
     "organizer",
     "participant_groups",
@@ -106,13 +112,123 @@ def flatten_for_csv(event: dict) -> dict:
     return row
 
 
+def _az_client(conn_str: str):
+    """Return a BlobServiceClient from a connection string."""
+    try:
+        from azure.storage.blob import BlobServiceClient
+    except ImportError:
+        raise ImportError(
+            "azure-storage-blob is required: pip install azure-storage-blob"
+        )
+    return BlobServiceClient.from_connection_string(conn_str)
+
+
+def sync_checkpoint_from_blob(upload_to: str, output_dir: Path) -> bool:
+    """
+    Download checkpoint.txt from Azure Blob to output_dir before a --resume run.
+    Returns True if a checkpoint was found and downloaded, False otherwise.
+    Only operates on az:// destinations; no-op for s3:// or if no connection string.
+    """
+    if not upload_to.startswith("az://"):
+        return False
+    conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+    if not conn_str:
+        log.warning(
+            "AZURE_STORAGE_CONNECTION_STRING not set — cannot sync checkpoint from blob"
+        )
+        return False
+    container, prefix = upload_to[5:].split("/", 1)
+    blob_name = f"{prefix}/checkpoint.txt"
+    try:
+        client = _az_client(conn_str)
+        blob = client.get_blob_client(container, blob_name)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        local_path = output_dir / "checkpoint.txt"
+        with open(local_path, "wb") as f:
+            f.write(blob.download_blob().readall())
+        lines = len(local_path.read_text().splitlines())
+        log.info(f"Resumed checkpoint from blob ({lines} URLs already processed)")
+        return True
+    except Exception as e:
+        if "BlobNotFound" in str(e) or "404" in str(e):
+            log.info("No checkpoint found in blob — starting fresh")
+        else:
+            log.warning(f"Could not sync checkpoint from blob: {e}")
+        return False
+
+
+def upload_checkpoint(upload_to: str, output_dir: Path) -> None:
+    """Upload checkpoint.txt to Azure Blob (called periodically during a run)."""
+    if not upload_to.startswith("az://"):
+        return
+    cp = output_dir / "checkpoint.txt"
+    if not cp.exists():
+        return
+    try:
+        _upload_outputs(upload_to, [cp])
+    except Exception as e:
+        log.warning(f"Checkpoint upload failed (non-fatal): {e}")
+
+
+def _upload_outputs(destination: str, paths: list[Path]) -> None:
+    """
+    Upload a list of local files to cloud storage.
+
+    destination format:
+      's3://bucket/prefix'   — AWS S3 (requires boto3, AWS credentials in env)
+      'az://container/prefix' — Azure Blob (requires azure-storage-blob,
+                                AZURE_STORAGE_CONNECTION_STRING in env)
+    """
+    if destination.startswith("s3://"):
+        try:
+            import boto3
+        except ImportError:
+            raise ImportError("boto3 is required for S3 upload: pip install boto3")
+        bucket, prefix = destination[5:].split("/", 1)
+        s3 = boto3.client("s3")
+        for p in paths:
+            key = f"{prefix}/{p.name}"
+            s3.upload_file(str(p), bucket, key)
+            log.info(f"Uploaded to s3://{bucket}/{key}")
+
+    elif destination.startswith("az://"):
+        try:
+            from azure.storage.blob import BlobServiceClient
+        except ImportError:
+            raise ImportError(
+                "azure-storage-blob is required for Azure upload: "
+                "pip install azure-storage-blob"
+            )
+        conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+        if not conn_str:
+            raise ValueError("AZURE_STORAGE_CONNECTION_STRING env var not set")
+        container, prefix = destination[5:].split("/", 1)
+        client = BlobServiceClient.from_connection_string(conn_str)
+        for p in paths:
+            blob_name = f"{prefix}/{p.name}"
+            blob = client.get_blob_client(container, blob_name)
+            with open(p, "rb") as f:
+                blob.upload_blob(f, overwrite=True)
+            log.info(f"Uploaded to az://{container}/{blob_name}")
+
+    else:
+        raise ValueError(
+            f"Unsupported upload destination '{destination}'. "
+            "Use 's3://bucket/prefix' or 'az://container/prefix'."
+        )
+
+
 def save_results(
     events: list[dict],
     output_dir: Path,
     run_id: str,
+    failures: Optional[list] = None,
+    upload_to: Optional[str] = None,
 ) -> Path:
     """
     Save events to JSONL, CSV, and a run summary file.
+    If failures are provided, writes them to failures_{run_id}.jsonl.
+    If upload_to is set, uploads all output files to S3 or Azure Blob after writing.
 
     Derives turmoil_level for each event before writing.
     Returns the path to the output directory.
@@ -150,11 +266,21 @@ def save_results(
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
     log.info(f"Appended to cumulative: {cumulative_path}")
 
-    # 4. Run summary
+    # 4. Dead-letter file for failed extractions
+    failures_path = None
+    if failures:
+        failures_path = output_dir / f"failures_{run_id}.jsonl"
+        with open(failures_path, "w", encoding="utf-8") as f:
+            for failure in failures:
+                f.write(json.dumps(failure, ensure_ascii=False) + "\n")
+        log.warning(f"Failures written: {failures_path} ({len(failures)} articles)")
+
+    # 5. Run summary
     summary = {
         "run_id": run_id,
         "timestamp": datetime.utcnow().isoformat(),
         "total_events": len(events),
+        "total_failures": len(failures) if failures else 0,
         "events_by_country": _count_by(events, "country"),
         "events_by_type": _count_by(events, "event_type"),
         "events_by_state_response": _count_by(events, "state_response"),
@@ -164,6 +290,7 @@ def save_results(
             "jsonl": str(jsonl_path),
             "csv": str(csv_path),
             "cumulative_jsonl": str(cumulative_path),
+            **({"failures_jsonl": str(failures_path)} if failures_path else {}),
         },
     }
     summary_path = output_dir / f"summary_{run_id}.json"
@@ -171,21 +298,37 @@ def save_results(
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
     # Print summary to console
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print(f"RUN SUMMARY — {run_id}")
-    print("="*60)
+    print("=" * 60)
     print(f"Total events extracted: {len(events)}")
-    print(f"\nBy country:")
-    for country, count in sorted(summary["events_by_country"].items(), key=lambda x: -x[1]):
+    print("\nBy country:")
+    for country, count in sorted(
+        summary["events_by_country"].items(), key=lambda x: -x[1]
+    ):
         print(f"  {country:30s} {count}")
-    print(f"\nBy event type:")
+    print("\nBy event type:")
     for etype, count in sorted(summary["events_by_type"].items(), key=lambda x: -x[1]):
         print(f"  {etype:30s} {count}")
-    print(f"\nBy turmoil level:")
-    for level, count in sorted(summary["events_by_turmoil_level"].items(), key=lambda x: -x[1]):
+    print("\nBy turmoil level:")
+    for level, count in sorted(
+        summary["events_by_turmoil_level"].items(), key=lambda x: -x[1]
+    ):
         print(f"  {level:30s} {count}")
     print(f"\nOutput: {output_dir}")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
+
+    # Upload to cloud storage if requested
+    if upload_to:
+        upload_paths = [jsonl_path, csv_path, cumulative_path, summary_path]
+        if failures_path:
+            upload_paths.append(failures_path)
+        checkpoint_path = output_dir / "checkpoint.txt"
+        if checkpoint_path.exists():
+            upload_paths.append(checkpoint_path)
+        log.info(f"Uploading {len(upload_paths)} files to {upload_to} ...")
+        _upload_outputs(upload_to, upload_paths)
+        log.info("Cloud upload complete")
 
     return output_dir
 

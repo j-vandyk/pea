@@ -10,6 +10,7 @@ def _make_classifier(codebook):
     clf.model_name = "llama"
     clf.codebook = codebook
     from src.utils.prompt_builder import ProtestEventPrompter
+
     clf.prompter = ProtestEventPrompter(codebook)
     clf.api_keys = {}
     clf.ollama_model = "llama3"
@@ -41,5 +42,6 @@ def test_cot_returns_prediction(codebook):
 
 def test_unknown_model_raises(codebook):
     import pytest
+
     with pytest.raises(ValueError, match="Unknown model"):
         LLMClassifier("gpt-999", codebook)

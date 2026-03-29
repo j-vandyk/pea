@@ -2,7 +2,11 @@
 LLM Event Extraction Module
 =============================
 Extracts structured protest event fields from news article text
-using the Claude API (Anthropic).
+using Claude (Anthropic) or OpenAI as the LLM backend.
+
+Supported providers:
+  - claude  (default) — uses Anthropic API, ANTHROPIC_API_KEY env var
+  - openai            — uses OpenAI API, OPENAI_API_KEY env var
 
 Codebook version: 2.2
 Follows the meta-codebook schema, extracting:
@@ -27,6 +31,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Optional
 
 import anthropic
@@ -70,6 +75,7 @@ For qualifying articles, extract each distinct protest event. Follow these rules
 2. If a field is not mentioned, use null.
 3. One article may describe multiple distinct events — return all of them.
 4. For location, prefer the most specific level available (city > region > country).
+   If the article names a specific venue, landmark, or neighbourhood, extract it into "venue".
 5. For actor names, use the full organisation/group name as given in the article.
 6. For event_type, use EXACTLY one of these keys:
    - demonstration_march  (peaceful public gathering, rally, march)
@@ -100,6 +106,7 @@ JSON schema for each event:
   "country": "country name",
   "city": "city or town name",
   "region": "state/province/region",
+  "venue": "specific named venue/landmark within the city (e.g. 'Lekki Toll Gate', 'Parliament Square')",
   "location_notes": "any additional location context",
   "event_type": "one of the 8 allowed keys above",
   "organizer": "organisation or group that called the event",
@@ -162,6 +169,94 @@ def _call_claude(
         return None
 
 
+def _call_openai(
+    system: str,
+    user: str,
+    model: str,
+    api_key: str,
+    timeout: int = 180,
+) -> Optional[str]:
+    """
+    Call the OpenAI API with system + user messages.
+    Returns the assistant response text, or None on failure.
+    """
+    try:
+        from openai import OpenAI, APIStatusError
+
+        client = OpenAI(api_key=api_key, timeout=timeout)
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=4096,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        return response.choices[0].message.content
+    except APIStatusError as e:
+        log.warning(f"OpenAI API error {e.status_code}: {e.message}")
+        return None
+    except Exception as e:
+        log.warning(f"OpenAI call failed: {e}")
+        return None
+
+
+def _call_azure(
+    system: str,
+    user: str,
+    model: str,
+    api_key: str,
+    timeout: int = 180,
+) -> Optional[str]:
+    """
+    Call Azure AI Foundry via its OpenAI-compatible endpoint.
+    The model name is the deployment name in your Foundry project
+    (e.g. 'gpt-4o-mini', 'claude-sonnet-4-6', 'gpt-5').
+    Reads AZURE_OPENAI_ENDPOINT from the environment.
+    Returns the assistant response text, or None on failure.
+    """
+    try:
+        from openai import OpenAI, APIStatusError
+
+        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+        if not endpoint:
+            raise ValueError("AZURE_OPENAI_ENDPOINT env var is not set")
+        client = OpenAI(base_url=endpoint, api_key=api_key, timeout=timeout)
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=4096,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        return response.choices[0].message.content
+    except APIStatusError as e:
+        log.warning(f"Azure API error {e.status_code}: {e.message}")
+        # Surface content filter hits with a sentinel so callers can skip retries
+        if e.status_code == 400 and "content_filter" in str(e.message):
+            return "__CONTENT_FILTERED__"
+        return None
+    except Exception as e:
+        log.warning(f"Azure call failed: {e}")
+        return None
+
+
+def _call_llm(
+    system: str,
+    user: str,
+    model: str,
+    api_key: str,
+    provider: str = "claude",
+) -> Optional[str]:
+    """Dispatch to the appropriate LLM backend."""
+    if provider == "openai":
+        return _call_openai(system=system, user=user, model=model, api_key=api_key)
+    if provider == "azure":
+        return _call_azure(system=system, user=user, model=model, api_key=api_key)
+    return _call_claude(system=system, user=user, model=model, api_key=api_key)
+
+
 def _clean_json(text: str) -> str:
     """Remove common LLM JSON formatting issues."""
     # Strip markdown code fences
@@ -199,7 +294,7 @@ def _parse_events(raw: str) -> list[dict]:
     end = text.rfind("]")
     if start != -1 and end != -1 and end > start:
         try:
-            cleaned = _clean_json(text[start:end + 1])
+            cleaned = _clean_json(text[start : end + 1])
             return json.loads(cleaned)
         except json.JSONDecodeError:
             pass
@@ -212,19 +307,21 @@ def extract_from_article(
     article: dict,
     model: str,
     api_key: str,
+    provider: str = "claude",
     max_retries: int = 2,
-) -> list[dict]:
+) -> Optional[list[dict]]:
     """
     Run LLM extraction on a single article.
-    Returns list of extracted event dicts.
+    Returns list of extracted event dicts, or None on total failure.
     """
     text = article.get("text_en") or article.get("text") or ""
 
     if not text or len(text) < 100:
-        log.debug(f"Skipping article with insufficient text: {article.get('url', '')[:60]}")
+        log.debug(
+            f"Skipping article with insufficient text: {article.get('url', '')[:60]}"
+        )
         return []
 
-    # Claude handles a wide range of languages; truncate generously
     truncated_text = text[:12000]
 
     prompt = USER_PROMPT_TEMPLATE.format(
@@ -237,17 +334,24 @@ def extract_from_article(
     )
 
     for attempt in range(max_retries + 1):
-        raw = _call_claude(
+        raw = _call_llm(
             system=SYSTEM_PROMPT,
             user=prompt,
             model=model,
             api_key=api_key,
+            provider=provider,
         )
 
+        if raw == "__CONTENT_FILTERED__":
+            log.warning(
+                "Content filtered by Azure policy (violence:medium) — skipping retries"
+            )
+            return None
+
         if raw is None:
-            log.warning(f"Claude returned nothing (attempt {attempt + 1})")
+            log.warning(f"LLM returned nothing (attempt {attempt + 1})")
             if attempt < max_retries:
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
             continue
 
         events = _parse_events(raw)
@@ -268,56 +372,132 @@ def extract_from_article(
         if attempt < max_retries:
             time.sleep(1)
 
-    return []
+    return None
+
+
+_PROVIDER_ENV_VARS = {
+    "claude": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "azure": "AZURE_FOUNDRY_API_KEY",
+}
+
+_PROVIDER_DEFAULT_MODELS = {
+    "claude": "claude-sonnet-4-6",
+    "openai": "gpt-4o-mini",
+    "azure": "gpt-4o-mini",
+}
 
 
 def extract_events(
     articles: list[dict],
-    model: str = "claude-sonnet-4-6",
+    model: Optional[str] = None,
     api_key: Optional[str] = None,
-    rate_limit_delay: float = 0.5,
-) -> list[dict]:
+    provider: str = "claude",
+    rate_limit_delay: float = 1.5,
+    checkpoint_path: Optional[str] = None,
+    upload_to: Optional[str] = None,
+) -> tuple[list[dict], list[dict]]:
     """
-    Run LLM extraction across all scraped articles using Claude.
+    Run LLM extraction across all scraped articles.
 
     Args:
         articles: list of article dicts with 'text_en' field
-        model: Claude model ID (default: claude-sonnet-4-6)
-        api_key: Anthropic API key (defaults to ANTHROPIC_API_KEY env var)
+        model: model ID / deployment name — defaults per provider:
+               claude → claude-sonnet-4-6, openai/azure → gpt-4o-mini.
+               For azure, this is the Foundry deployment name (e.g. 'gpt-4o-mini',
+               'claude-sonnet-4-6', 'gpt-5' — whatever is deployed in your project).
+        api_key: API key — defaults to ANTHROPIC_API_KEY, OPENAI_API_KEY, or
+                 AZURE_FOUNDRY_API_KEY env var depending on provider
+        provider: 'claude' (default), 'openai', or 'azure'
         rate_limit_delay: seconds between requests (polite pacing)
+        checkpoint_path: path to checkpoint file; processed URLs are skipped
+                         on resume and appended after each successful article
 
     Returns:
-        flat list of all extracted event dicts
+        (events, failures) — flat list of extracted event dicts, and list of
+        articles that failed extraction after all retries.
     """
-    resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-    if not resolved_key:
+    if provider not in _PROVIDER_ENV_VARS:
         raise ValueError(
-            "No Anthropic API key provided. Set ANTHROPIC_API_KEY or pass api_key=."
+            f"Unknown provider '{provider}'. Choose 'claude', 'openai', or 'azure'."
         )
 
+    resolved_model = model or _PROVIDER_DEFAULT_MODELS[provider]
+    env_var = _PROVIDER_ENV_VARS[provider]
+    resolved_key = api_key or os.environ.get(env_var, "")
+    if not resolved_key:
+        raise ValueError(
+            f"No API key for provider '{provider}'. "
+            f"Set {env_var} env var or pass api_key=."
+        )
+
+    log.info(f"LLM provider: {provider} | model: {resolved_model}")
+
+    # Load already-processed URLs if resuming
+    done_urls: set[str] = set()
+    if checkpoint_path:
+        cp = Path(checkpoint_path)
+        if cp.exists():
+            done_urls = set(cp.read_text().splitlines())
+            log.info(f"Checkpoint: skipping {len(done_urls)} already-processed URLs")
+
     all_events = []
+    failures = []
     processed = 0
     skipped = 0
 
     for i, article in enumerate(articles):
-        url = article.get("url", "")[:70]
-        log.info(f"[{i+1}/{len(articles)}] Extracting from: {url}...")
+        url = article.get("url", "")
+        url_display = url[:70]
 
-        events = extract_from_article(article, model=model, api_key=resolved_key)
+        if url in done_urls:
+            log.info(
+                f"[{i+1}/{len(articles)}] Skipping (checkpointed): {url_display}..."
+            )
+            continue
+
+        log.info(f"[{i+1}/{len(articles)}] Extracting from: {url_display}...")
+
+        events = extract_from_article(
+            article, model=resolved_model, api_key=resolved_key, provider=provider
+        )
 
         if events:
             log.info(f"  ✓ Found {len(events)} event(s)")
             all_events.extend(events)
             processed += 1
-        else:
-            log.info(f"  — No events found or extraction failed")
+        elif events is not None and len(events) == 0:
+            # Empty list = valid response (no protest events in article)
+            log.info("  — No events found")
             skipped += 1
+        else:
+            # None = extraction failed after all retries
+            log.warning(f"  ✗ Extraction failed: {url_display}")
+            failures.append(
+                {
+                    "url": url,
+                    "title": article.get("title", ""),
+                    "reason": "extraction_failed",
+                    "lang": article.get("text_lang", "unknown"),
+                }
+            )
+            skipped += 1
+
+        # Write to checkpoint after every article (success or no-events; not failures)
+        if checkpoint_path and events is not None:
+            with open(checkpoint_path, "a") as f:
+                f.write(url + "\n")
+            # Upload checkpoint to blob every 10 articles for crash-safe resume
+            if upload_to and (i + 1) % 10 == 0:
+                from src.acquisition.storage import upload_checkpoint
+
+                upload_checkpoint(upload_to, Path(checkpoint_path).parent)
 
         if i < len(articles) - 1:
             time.sleep(rate_limit_delay)
 
     log.info(
         f"Extraction complete: {len(all_events)} events from "
-        f"{processed} articles ({skipped} with no events)"
+        f"{processed} articles ({skipped} with no events, {len(failures)} failures)"
     )
-    return all_events
+    return all_events, failures

@@ -7,21 +7,25 @@ from src.models.schemas import ProtestEventPrediction
 def _make_predictions(valid_count, invalid_count):
     preds = []
     for _ in range(valid_count):
-        preds.append(ProtestEventPrediction(
-            event_type="demonstration_march",
-            confidence_score=0.9,
-            reasoning="valid",
-            schema_valid=True,
-            key_indicators=["gathered"],
-        ))
+        preds.append(
+            ProtestEventPrediction(
+                event_type="demonstration_march",
+                confidence_score=0.9,
+                reasoning="valid",
+                schema_valid=True,
+                key_indicators=["gathered"],
+            )
+        )
     for _ in range(invalid_count):
-        preds.append(ProtestEventPrediction(
-            event_type="UNCLASSIFIABLE",
-            confidence_score=0.1,
-            reasoning="invalid",
-            schema_valid=False,
-            key_indicators=[],
-        ))
+        preds.append(
+            ProtestEventPrediction(
+                event_type="UNCLASSIFIABLE",
+                confidence_score=0.1,
+                reasoning="invalid",
+                schema_valid=False,
+                key_indicators=[],
+            )
+        )
     return preds
 
 

@@ -11,8 +11,12 @@ def test_codebook_loads(codebook):
 
 def test_codebook_has_expected_types(codebook):
     expected = {
-        "demonstration_march", "strike_boycott", "riot",
-        "occupation_seizure", "confrontation", "petition_signature"
+        "demonstration_march",
+        "strike_boycott",
+        "riot",
+        "occupation_seizure",
+        "confrontation",
+        "petition_signature",
     }
     assert expected.issubset(set(codebook.event_definitions.keys()))
 
@@ -20,7 +24,9 @@ def test_codebook_has_expected_types(codebook):
 def test_get_prompt_context_contains_definitions(codebook):
     context = codebook.get_prompt_context()
     assert "EVENT TYPE DEFINITIONS" in context
-    assert "demonstration_march" in context.lower() or "demonstration" in context.lower()
+    assert (
+        "demonstration_march" in context.lower() or "demonstration" in context.lower()
+    )
 
 
 def test_validate_prediction_valid(codebook):

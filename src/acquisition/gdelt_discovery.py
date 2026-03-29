@@ -13,9 +13,6 @@ For the Global South focus, this module:
 
 import logging
 import time
-import urllib.parse
-from datetime import datetime, timedelta
-from typing import Optional
 
 import requests
 
@@ -37,8 +34,7 @@ PROTEST_THEMES = [
     "TAX_FNCACT_PROTESTER",
 ]
 
-# Country code mapping for common Global South countries
-# GDELT uses its own country codes (based on FIPS) but also accepts ISO2 in some endpoints
+# ISO2 → country display name (used for keyword fallback in multi-country queries)
 COUNTRY_LABELS = {
     "ZA": "South Africa",
     "NG": "Nigeria",
@@ -68,8 +64,39 @@ COUNTRY_LABELS = {
     "SN": "Senegal",
 }
 
+# ISO2 → GDELT FIPS 10-4 country code (required for sourcecountry filter)
+# GDELT does NOT use ISO2 codes — passing ISO2 silently fails
+ISO2_TO_FIPS = {
+    "ZA": "SF",  # South Africa
+    "NG": "NI",  # Nigeria
+    "DZ": "AG",  # Algeria
+    "UG": "UG",  # Uganda (same in both)
+    "KE": "KE",  # Kenya (same in both)
+    "GH": "GH",  # Ghana (same in both)
+    "ET": "ET",  # Ethiopia (same in both)
+    "TZ": "TZ",  # Tanzania (same in both)
+    "SD": "SU",  # Sudan
+    "EG": "EG",  # Egypt (same in both)
+    "SN": "SG",  # Senegal
+    "ZW": "ZI",  # Zimbabwe
+    "IN": "IN",  # India (same in both)
+    "PK": "PK",  # Pakistan (same in both)
+    "BD": "BG",  # Bangladesh
+    "ID": "ID",  # Indonesia (same in both)
+    "PH": "RP",  # Philippines
+    "TH": "TH",  # Thailand (same in both)
+    "VN": "VM",  # Vietnam
+    "BR": "BR",  # Brazil (same in both)
+    "MX": "MX",  # Mexico (same in both)
+    "CO": "CO",  # Colombia (same in both)
+    "AR": "AR",  # Argentina (same in both)
+    "PE": "PE",  # Peru (same in both)
+    "IQ": "IZ",  # Iraq
+    "MM": "BM",  # Myanmar/Burma
+}
 
-def build_gdelt_query(query: str, countries: list[str], days: int) -> dict:
+
+def build_gdelt_query(query: str, countries: list, days: int) -> dict:
     """
     Build GDELT DOC API query parameters.
 
@@ -81,42 +108,51 @@ def build_gdelt_query(query: str, countries: list[str], days: int) -> dict:
     Returns:
         dict of query parameters
     """
-    # GDELT DOC API timespan format: e.g. "7days", "24hours", "1month"
-    if days <= 31:
-        timespan = f"{days}days"
+    # GDELT DOC API only accepts specific timespan values — arbitrary day counts fail silently.
+    # Valid values: 15min, 1hour, 4hours, 1day, 7days, 1month, 3months, 6months, 1year
+    if days <= 1:
+        timespan = "1day"
+    elif days <= 7:
+        timespan = "7days"
+    elif days <= 31:
+        timespan = "1month"
+    elif days <= 92:
+        timespan = "3months"
+    elif days <= 183:
+        timespan = "6months"
     else:
-        months = max(1, days // 30)
-        timespan = f"{months}months"
+        timespan = "1year"
 
-    # Build keyword query — GDELT uses space for AND, OR for pipe
-    # For protest detection we combine user query with protest themes
+    # Build keyword query — GDELT requires OR'd terms to be wrapped in ()
     keyword_parts = [f'"{term}"' if " " in term else term for term in query.split()]
-    keyword_query = " OR ".join(keyword_parts)
-
-    # Add country name variants for better recall on non-Western sources
-    country_names = [COUNTRY_LABELS.get(c, c) for c in countries if c in COUNTRY_LABELS]
+    keyword_query = "(" + " OR ".join(keyword_parts) + ")"
 
     params = {
         "query": keyword_query,
-        "mode": "ArtList",          # return article list (not timeline)
-        "maxrecords": 250,          # max per request
+        "mode": "ArtList",  # return article list (not timeline)
+        "maxrecords": 250,  # max per request
         "timespan": timespan,
         "format": "json",
         "sort": "DateDesc",
     }
 
-    # Note: GDELT's sourcecountry parameter accepts a single code only.
-    # When multiple countries are requested, we skip this filter and instead
-    # append country names to the keyword query for recall, then filter post-fetch.
+    # GDELT sourcecountry requires FIPS codes, not ISO2.
+    # The parameter only accepts a single country — for multiple countries we
+    # append country names to the keyword query instead.
     if len(countries) == 1:
-        params["sourcecountry"] = countries[0]
+        fips = ISO2_TO_FIPS.get(countries[0], countries[0])
+        params["sourcecountry"] = fips
+        log.debug(f"Using FIPS code '{fips}' for country '{countries[0]}'")
     elif countries:
-        # Append country names to the query for signal without API restriction
-        country_name_query = " OR ".join(
-            f'"{COUNTRY_LABELS[c]}"' for c in countries if c in COUNTRY_LABELS
+        country_name_query = (
+            "("
+            + " OR ".join(
+                f'"{COUNTRY_LABELS[c]}"' for c in countries if c in COUNTRY_LABELS
+            )
+            + ")"
         )
-        if country_name_query:
-            params["query"] = f"({keyword_query}) ({country_name_query})"
+        if country_name_query != "()":
+            params["query"] = f"{keyword_query} {country_name_query}"
 
     return params
 
@@ -125,26 +161,46 @@ def fetch_gdelt_articles(params: dict, retries: int = 3) -> list[dict]:
     """
     Call GDELT DOC API and return raw article list.
     """
+    import json as _json
+
     for attempt in range(retries):
+        resp = None
         try:
-            resp = requests.get(GDELT_DOC_API, params=params, timeout=30)
+            resp = requests.get(GDELT_DOC_API, params=params, timeout=60)
             resp.raise_for_status()
-            data = resp.json()
-            return data.get("articles", [])
+        except requests.exceptions.Timeout:
+            log.warning(f"GDELT request timed out (attempt {attempt+1})")
+            if attempt < retries - 1:
+                time.sleep(2**attempt)
+            continue
         except requests.exceptions.HTTPError as e:
             log.warning(f"GDELT HTTP error (attempt {attempt+1}): {e}")
             if attempt < retries - 1:
-                # GDELT rate limit: 1 req / 5s. Back off generously on 429.
-                wait = 30 * (attempt + 1) if "429" in str(e) else 2 ** attempt
-                log.info(f"Waiting {wait}s before retry...")
+                wait = 30 * (attempt + 1) if "429" in str(e) else 2**attempt
                 time.sleep(wait)
+            continue
         except requests.exceptions.RequestException as e:
-            log.warning(f"GDELT request error (attempt {attempt+1}): {e}")
+            log.warning(f"GDELT connection error (attempt {attempt+1}): {e}")
             if attempt < retries - 1:
-                time.sleep(2 ** attempt)
-        except ValueError as e:
-            log.warning(f"GDELT JSON parse error: {e}")
+                time.sleep(2**attempt)
+            continue
+
+        # Parse JSON manually so we can log what GDELT actually returned on failure
+        text = resp.text.strip() if resp else ""
+        if not text:
+            log.warning(
+                f"GDELT returned empty body (attempt {attempt+1}) — invalid param or rate limit"
+            )
             break
+        try:
+            data = _json.loads(text)
+            return data.get("articles", [])
+        except _json.JSONDecodeError as e:
+            log.warning(
+                f"GDELT JSON parse error (attempt {attempt+1}): {e} — response: {text[:300]}"
+            )
+            break
+
     return []
 
 
@@ -155,20 +211,47 @@ def filter_protest_relevant(articles: list[dict], min_score: float = 0.0) -> lis
     """
     # Keywords that strongly indicate protest event reporting
     protest_signals = {
-        "protest", "protests", "protester", "protesters",
-        "demonstration", "demonstrators", "march", "marched",
-        "strike", "strikes", "strikers", "walkout",
-        "rally", "rallies", "riot", "riots",
-        "unrest", "uprising", "revolt", "rebellion",
-        "civil disobedience", "blockade", "sit-in",
-        "clashes", "crackdown", "teargas", "tear gas",
-        "detained", "arrested", "dispersed",
+        "protest",
+        "protests",
+        "protester",
+        "protesters",
+        "demonstration",
+        "demonstrators",
+        "march",
+        "marched",
+        "strike",
+        "strikes",
+        "strikers",
+        "walkout",
+        "rally",
+        "rallies",
+        "riot",
+        "riots",
+        "unrest",
+        "uprising",
+        "revolt",
+        "rebellion",
+        "civil disobedience",
+        "blockade",
+        "sit-in",
+        "clashes",
+        "crackdown",
+        "teargas",
+        "tear gas",
+        "detained",
+        "arrested",
+        "dispersed",
         # Non-English signals (common in multilingual GDELT)
-        "manifestation", "manifestantes",  # Spanish/French
-        "huelga", "paro",                  # Spanish
-        "grève", "manifestation",          # French
-        "aksi", "demonstrasi",             # Indonesian/Malay
-        "احتجاج", "مظاهرة",               # Arabic
+        "manifestation",
+        "manifestantes",  # Spanish/French
+        "huelga",
+        "paro",  # Spanish
+        "grève",
+        "manifestation",  # French
+        "aksi",
+        "demonstrasi",  # Indonesian/Malay
+        "احتجاج",
+        "مظاهرة",  # Arabic
     }
 
     filtered = []
@@ -180,7 +263,10 @@ def filter_protest_relevant(articles: list[dict], min_score: float = 0.0) -> lis
         if any(signal in title for signal in protest_signals):
             article["_relevance"] = "title_match"
             filtered.append(article)
-        elif any(signal in url for signal in ["protest", "strike", "demo", "march", "riot", "unrest"]):
+        elif any(
+            signal in url
+            for signal in ["protest", "strike", "demo", "march", "riot", "unrest"]
+        ):
             article["_relevance"] = "url_match"
             filtered.append(article)
         else:
@@ -193,7 +279,7 @@ def filter_protest_relevant(articles: list[dict], min_score: float = 0.0) -> lis
 
 def discover_articles(
     query: str,
-    countries: list[str],
+    countries: list,
     days: int = 7,
     max_results: int = 100,
 ) -> list[dict]:
@@ -210,7 +296,9 @@ def discover_articles(
         list of article dicts with keys: url, title, seendate, sourcecountry,
         sourcelanguage, domain, _relevance
     """
-    log.info(f"Querying GDELT DOC API: query='{query}', countries={countries}, days={days}")
+    log.info(
+        f"Querying GDELT DOC API: query='{query}', countries={countries}, days={days}"
+    )
 
     params = build_gdelt_query(query, countries, days)
     log.debug(f"GDELT params: {params}")
@@ -219,10 +307,21 @@ def discover_articles(
     log.info(f"GDELT returned {len(raw_articles)} raw articles")
 
     if not raw_articles:
-        # Fallback: try without country filter (GDELT sourcecountry filter is sometimes unreliable)
-        log.info("Retrying without country filter for broader results...")
+        # Fallback: try without sourcecountry filter (GDELT sourcecountry is sometimes unreliable)
+        # but add country name(s) to the keyword query so results stay geographically relevant
+        log.info(
+            "Retrying without sourcecountry filter — adding country name keywords instead..."
+        )
         time.sleep(5)  # brief pause before fallback to avoid rate limits
         fallback_params = {k: v for k, v in params.items() if k != "sourcecountry"}
+        country_names = [COUNTRY_LABELS[c] for c in countries if c in COUNTRY_LABELS]
+        if country_names:
+            country_name_query = (
+                "(" + " OR ".join(f'"{n}"' for n in country_names) + ")"
+            )
+            base_query = fallback_params.get("query", "")
+            if country_name_query not in base_query:
+                fallback_params["query"] = f"{base_query} {country_name_query}"
         raw_articles = fetch_gdelt_articles(fallback_params)
         log.info(f"Fallback returned {len(raw_articles)} articles")
 
@@ -234,19 +333,21 @@ def discover_articles(
         if not url or url in seen_urls:
             continue
         seen_urls.add(url)
-        normalized.append({
-            "url": url,
-            "title": art.get("title", ""),
-            "seendate": art.get("seendate", ""),
-            "sourcecountry": art.get("sourcecountry", ""),
-            "sourcelanguage": art.get("sourcelanguage", ""),
-            "domain": art.get("domain", ""),
-            "_relevance": None,
-            "text": None,
-            "text_lang": None,
-            "text_en": None,
-            "events": [],
-        })
+        normalized.append(
+            {
+                "url": url,
+                "title": art.get("title", ""),
+                "seendate": art.get("seendate", ""),
+                "sourcecountry": art.get("sourcecountry", ""),
+                "sourcelanguage": art.get("sourcelanguage", ""),
+                "domain": art.get("domain", ""),
+                "_relevance": None,
+                "text": None,
+                "text_lang": None,
+                "text_en": None,
+                "events": [],
+            }
+        )
 
     # Filter for protest relevance
     filtered = filter_protest_relevant(normalized)

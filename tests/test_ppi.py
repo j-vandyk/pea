@@ -5,7 +5,13 @@ from src.models.schemas import ProtestEventPrediction
 
 
 def _make_predictions():
-    types = ["demonstration_march", "demonstration_march", "riot", "strike_boycott", "UNCLASSIFIABLE"]
+    types = [
+        "demonstration_march",
+        "demonstration_march",
+        "riot",
+        "strike_boycott",
+        "UNCLASSIFIABLE",
+    ]
     return [
         ProtestEventPrediction(
             event_type=t,
@@ -44,7 +50,12 @@ def test_estimate_by_confidence():
     preds = _make_predictions()
     ppi = PredictionPoweredInference(preds)
     result = ppi.estimate_by_confidence()
-    assert result["high_confidence"] + result["medium_confidence"] + result["low_confidence"] == 5
+    assert (
+        result["high_confidence"]
+        + result["medium_confidence"]
+        + result["low_confidence"]
+        == 5
+    )
 
 
 def test_estimate_correlation():

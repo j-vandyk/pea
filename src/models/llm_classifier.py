@@ -5,7 +5,6 @@ Model initialisation is deferred until the LLM setup stage.
 """
 
 import json
-import re
 from typing import List, Dict, Optional
 
 from src.models.schemas import ProtestEventPrediction
@@ -19,7 +18,7 @@ def _unclassifiable(reason: str) -> ProtestEventPrediction:
         confidence_score=0.0,
         reasoning=reason,
         schema_valid=False,
-        key_indicators=[]
+        key_indicators=[],
     )
 
 
@@ -54,9 +53,11 @@ class LLMClassifier:
         """Return a callable that accepts a prompt string and returns a string."""
         if self.model_name == "llama":
             return self._call_ollama
+        if self.model_name in ("claude", "openai", "azure"):
+            return self._call_cloud
         raise ValueError(
             f"Unknown model '{self.model_name}'. "
-            "Supported: 'llama'. See LLAMA_LOCAL_SETUP_M2_MAC.md for setup."
+            "Supported: 'claude', 'openai', 'azure', 'llama'."
         )
 
     def _call_ollama(self, prompt: str) -> str:
@@ -71,6 +72,19 @@ class LLMClassifier:
         )
         return response["response"]
 
+    def _call_cloud(self, prompt: str) -> str:
+        """Send prompt to a cloud LLM (claude/openai/azure) via extractor._call_llm."""
+        from src.acquisition.extractor import _call_llm
+
+        result = _call_llm(
+            system="You are an expert protest event classifier. Return only valid JSON.",
+            user=prompt,
+            model=self.ollama_model,  # ollama_model field reused as model/deployment name
+            api_key=self.api_keys.get(self.model_name, ""),
+            provider=self.model_name,
+        )
+        return result or ""
+
     def _parse_response(self, response: str) -> dict:
         """Extract the outermost JSON object from an LLM response string."""
         # Try direct parse first (clean response)
@@ -79,16 +93,18 @@ class LLMClassifier:
         except json.JSONDecodeError:
             pass
         # Find the last { ... } block (handles preamble/postamble text)
-        start = response.rfind('{')
-        end = response.rfind('}')
+        start = response.rfind("{")
+        end = response.rfind("}")
         if start != -1 and end != -1 and end > start:
             try:
-                return json.loads(response[start:end + 1])
+                return json.loads(response[start : end + 1])
             except json.JSONDecodeError:
                 pass
         raise ValueError(f"No JSON found in response: {response[:200]}")
 
-    def _to_prediction(self, response: str, _retry: bool = True) -> ProtestEventPrediction:
+    def _to_prediction(
+        self, response: str, _retry: bool = True
+    ) -> ProtestEventPrediction:
         try:
             data = self._parse_response(response)
             pred = ProtestEventPrediction(**data)

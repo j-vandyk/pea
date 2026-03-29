@@ -14,10 +14,10 @@ jobs:
         python-version: '3.11'
 
     - name: Install linters
-      run: pip install black flake8
+      run: pip install black==25.11.0 flake8
 
     - name: black
       run: black --check src/ tests/
 
     - name: flake8
-      run: flake8 src/ tests/ --max-line-length=100
+      run: flake8 src/ tests/
