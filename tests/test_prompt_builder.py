@@ -15,7 +15,11 @@ def test_zero_shot_prompt_contains_codebook(prompter):
 
 def test_few_shot_prompt_contains_examples(prompter):
     examples = [
-        {"text": "Crowd marched.", "classification": "demonstration_march", "reasoning": "March."}
+        {
+            "text": "Crowd marched.",
+            "classification": "demonstration_march",
+            "reasoning": "March.",
+        }
     ]
     prompt = prompter.build_few_shot_prompt("New text.", examples)
     assert "Crowd marched" in prompt
