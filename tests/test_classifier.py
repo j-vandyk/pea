@@ -1,6 +1,6 @@
 """Tests for LLMClassifier — all LLM calls are mocked."""
 
-from unittest.mock import patch, MagicMock  # noqa: F401
+from unittest.mock import patch, MagicMock
 from src.models.llm_classifier import LLMClassifier
 from tests.conftest import MOCK_LLM_JSON
 

@@ -1,7 +1,7 @@
 """Tests for CodebookManager."""
 
-import pytest  # noqa: F401 — used for fixtures
-from src.utils.codebook_manager import CodebookManager  # noqa: F401 — used via fixture
+import pytest
+from src.utils.codebook_manager import CodebookManager
 from src.models.schemas import ProtestEventPrediction
 
 

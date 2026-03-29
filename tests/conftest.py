@@ -4,7 +4,7 @@ All LLM calls are mocked — no real API or Ollama connection required.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch  # noqa: F401 — re-exported for test modules
+from unittest.mock import MagicMock, patch
 
 from src.models.schemas import ProtestEventPrediction
 from src.utils.codebook_manager import CodebookManager
