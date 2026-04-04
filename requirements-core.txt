@@ -28,3 +28,9 @@ python-dotenv==1.0.0
 pyyaml==6.0
 tqdm==4.66.0
 requests==2.31.0
+
+# Relevance filter (ConfliBERT / zero-shot NLI)
+# CPU-only torch is ~250 MB vs ~2 GB for CUDA build.
+# Pin to cpu variant so Docker image stays lean.
+torch>=2.1.0
+transformers>=4.40.0
