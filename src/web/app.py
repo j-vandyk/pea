@@ -284,7 +284,7 @@ st.sidebar.markdown(
 
 st.sidebar.divider()
 st.sidebar.caption(
-    "Codebook v2.2 · Halterman & Keith 2025\n\n"
+    "Codebook v2.3 · Halterman & Keith 2025\n\n"
     "[GitHub](https://github.com) · [Docs](#)"
 )
 
