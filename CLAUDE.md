@@ -169,48 +169,92 @@ The improved deduplicator in `processing.py` uses:
 
 ## Annotation / Active Learning Workflow
 
-For building training data toward QLoRA fine-tuning (target: 200+ gold pairs):
+For building training data toward QLoRA fine-tuning (target: 200+ gold pairs).
+`_article_text` is now written into every event dict by the extractor, so training pairs are populated correctly.
+
+### First-time setup (once only)
 
 ```bash
-# 1. Start Label Studio
+# Start Label Studio
 docker compose -f docker-compose.annotation.yml up -d
-# Open http://localhost:8080 — create account, create project
-# Settings → Labeling Interface → Code → paste src/annotation/labeling_config.xml
+# Opens at http://localhost:8080
+```
 
-# 2. Export highest-priority events (low/medium confidence first)
+1. Create account at `http://localhost:8080`
+2. Create project: "PEA Protest Events"
+3. Settings → Labeling Interface → Code tab
+4. Paste full contents of `src/annotation/labeling_config.xml`
+5. Save
+
+### Per-batch workflow (repeat after each pipeline run)
+
+```bash
+# Export highest-priority tasks (low/medium confidence first)
 python -m src.annotation.export_for_annotation \
   --events data/raw/all_events.jsonl \
   --output data/annotation/tasks_$(date +%Y%m%d).json \
-  --max-tasks 50
+  --max-tasks 50 \
+  --tiers 1,2
 
-# 3. In Label Studio: Import → upload the JSON file → annotate
+# In Label Studio: Import → upload JSON → annotate each task:
+#   1. Is this a genuine protest event?
+#   2. Correct the event type if wrong
+#   3. Correct confidence if wrong
+#   4. Flag extraction errors if any
+# Export → JSON → save to data/annotation/label_studio_export.json
 
-# 4. Export from Label Studio: Projects → Export → JSON
-
-# 5. Import corrections back
+# Import corrections back
 python -m src.annotation.import_annotations \
   --annotations data/annotation/label_studio_export.json \
   --output-dir data/annotation/
 ```
 
-**Known gap:** `import_annotations.py` builds training pairs from `event._article_text`, but the extractor does not currently write article text into event dicts. Training pairs will be empty until this field is backfilled. Pending fix.
+**Outputs:** `data/annotation/reviewed_events.jsonl`, `training_data.jsonl`, `annotation_stats.json`
+
+Console prints running count toward 200-pair fine-tuning threshold.
+
+### Priority tiers
+
+| Tier | Condition | Why |
+|------|-----------|-----|
+| 1 (annotate first) | Low confidence + high relevance score | Uncertain but probably real — highest misclassification risk |
+| 2 | Medium confidence | Borderline — most F1 improvement per annotation hour |
+| 3 (10% spot-check) | High confidence | Precision monitoring only |
 
 ---
 
 ## Validation
 
+Automated benchmark — no manual annotation. Run against `data/processed/events_consolidated.jsonl` (deduplicated) for the cleanest recall number.
+
 ```bash
 # GLOCON (awaiting data access — applied 2026-04-05)
+# Download dataset to somewhere outside the repo first:
+#   git clone <glocon-url> ~/datasets/glocon
 python -m src.validation.glocon_validator \
-  --glocon-dir path/to/glocon-dataset/data/south_africa/english \
+  --glocon-dir ~/datasets/glocon/data/south_africa/english \
   --pea-events data/processed/events_consolidated.jsonl \
-  --output data/validation/recall_report.json
+  --output data/validation/recall_report_glocon.json
 
-# ACLED (pending: register at acleddata.com for API token)
-# acled_validator.py not yet built
+# ACLED (register at acleddata.com — free for researchers, token by email)
+# acled_validator.py not yet built — blocked on token
+python -m src.validation.acled_validator \
+  --countries ZA \
+  --start-date 2026-01-01 \
+  --end-date 2026-03-31 \
+  --pea-events data/processed/events_consolidated.jsonl \
+  --output data/validation/recall_report_acled.json
 ```
 
-Recall target: ≥60% against GLOCON/ACLED (GDELT source coverage is sparser than curated feeds).
+**Recall targets:**
+
+| Recall | Status |
+|--------|--------|
+| ≥ 60% | Acceptable for GDELT-sourced pipeline |
+| 40–60% | Investigate misses by type and country |
+| < 40% | Diagnose stage by stage: GDELT → scraper → relevance filter → LLM |
+
+The JSON report includes a `match_records` array (one entry per gold event) for diagnosing specific misses.
 
 ---
 

@@ -365,4 +365,121 @@ Options:
   --no-geocode         Skip Nominatim geocoding
   --resume             Skip already-processed URLs (reads checkpoint.txt)
   --upload-to TEXT     Cloud destination: az://container/prefix or s3://bucket/prefix
+  --relevance-threshold FLOAT  Minimum relevance score for LLM extraction [default: 0.30]
 ```
+
+---
+
+## Annotation Workflow (Active Learning Loop)
+
+The annotation pipeline builds gold-standard training data for future fine-tuning. Run this after every few pipeline runs. Target: 200+ reviewed events to unlock QLoRA fine-tuning.
+
+### First-time setup
+
+```bash
+# Start Label Studio (runs at http://localhost:8080)
+docker compose -f docker-compose.annotation.yml up -d
+```
+
+1. Go to `http://localhost:8080` and create an account
+2. Create a new project — name it "PEA Protest Events"
+3. Settings → Labeling Interface → Code tab
+4. Paste the full contents of [src/annotation/labeling_config.xml](src/annotation/labeling_config.xml)
+5. Save
+
+### Per-batch workflow (repeat after each pipeline run)
+
+```bash
+# 1. Export the highest-priority events for review
+#    (low and medium confidence first — these are the most valuable to annotate)
+python -m src.annotation.export_for_annotation \
+  --events data/raw/all_events.jsonl \
+  --output data/annotation/tasks_$(date +%Y%m%d).json \
+  --max-tasks 50 \
+  --tiers 1,2
+
+# 2. In Label Studio:
+#    Import → upload the tasks JSON file
+#    Annotate each task (~2 min each):
+#      - Is this a genuine protest event?
+#      - Is the event type correct? (fix if not)
+#      - Is the confidence right?
+#      - Flag any specific extraction errors
+#    Export → JSON → save to data/annotation/label_studio_export.json
+
+# 3. Import corrections back into the pipeline
+python -m src.annotation.import_annotations \
+  --annotations data/annotation/label_studio_export.json \
+  --output-dir data/annotation/
+```
+
+**Outputs written to `data/annotation/`:**
+
+| File | Contents |
+|------|----------|
+| `reviewed_events.jsonl` | All reviewed events with human corrections applied |
+| `training_data.jsonl` | Gold (article text → corrected JSON) pairs for fine-tuning |
+| `annotation_stats.json` | False positive rate, type correction rate, running pair count |
+
+The console output prints progress toward the 200-pair fine-tuning threshold.
+
+---
+
+## Validation
+
+Validation benchmarks pipeline recall against a gold-standard human-coded dataset. It is automated — no manual annotation required.
+
+### GLOCON GSC
+
+```bash
+# Download dataset (requires data access approval from emerging-welfare team)
+git clone <glocon-url> ~/datasets/glocon
+
+# Run validator against processed (deduplicated) events
+python -m src.validation.glocon_validator \
+  --glocon-dir ~/datasets/glocon/data/south_africa/english \
+  --pea-events data/processed/events_consolidated.jsonl \
+  --output data/validation/recall_report_glocon.json
+```
+
+### ACLED
+
+```bash
+# Register at acleddata.com for a free API token, then:
+python -m src.validation.acled_validator \
+  --countries ZA \
+  --start-date 2026-01-01 \
+  --end-date 2026-03-31 \
+  --pea-events data/processed/events_consolidated.jsonl \
+  --output data/validation/recall_report_acled.json
+```
+
+**Interpreting results:**
+
+| Recall | Interpretation |
+|--------|----------------|
+| ≥ 60% | Acceptable for GDELT-sourced pipeline |
+| 40–60% | Investigate systematic misses by type and country |
+| < 40% | Diagnose at each stage: GDELT discovery → scraper → relevance filter → LLM |
+
+The JSON report includes per-event match records so you can inspect exactly which events were missed and where the gap is.
+
+### How annotation and validation connect
+
+```
+Pipeline run  →  data/raw/all_events.jsonl
+                        │
+          ┌─────────────┴──────────────┐
+          │                            │
+   export_for_annotation          Stage 2 processing
+          │                            │
+    Label Studio              events_consolidated.jsonl
+    (you annotate)                     │
+          │                  ┌─────────┴──────────┐
+   import_annotations    glocon_validator     acled_validator
+          │                  │                     │
+   training_data.jsonl    recall vs           recall vs
+   (→ fine-tuning)        GLOCON gold         ACLED gold
+```
+
+Validation tells you **how accurate the pipeline is**. Annotation generates **data to make it more accurate**.
