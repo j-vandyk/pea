@@ -95,7 +95,7 @@ def run_pipeline(
     resume: bool = False,
     relevance_threshold: float = 0.30,
 ):
-    log.info("=== Protest Event Analysis Pipeline (codebook v2.2) ===")
+    log.info("=== Protest Event Analysis Pipeline (codebook v2.3) ===")
     log.info(f"Query: '{query}' | Countries: {countries} | Days back: {days}")
     log.info(
         f"LLM provider: {provider} | model: {model or 'default'} | source: {source}"
