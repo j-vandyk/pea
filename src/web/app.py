@@ -150,7 +150,7 @@ def trigger_pipeline_job(pipeline_args: list) -> dict:
         f"?api-version=2023-05-01"
     )
 
-    container_name = os.environ.get("CONTAINER_APP_CONTAINER_NAME", "pea-pipeline")
+    container_name = os.environ.get("CONTAINER_APP_CONTAINER_NAME", "pea-pipeline-job")
     payload = {
         "template": {
             "containers": [
