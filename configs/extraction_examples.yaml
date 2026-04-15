@@ -144,3 +144,91 @@ examples:
         source_country: null
         source_language: "en"
         confidence: "high"
+
+  - id: "ex_04"
+    description: "Demonstration with teargas dispersal — Nigeria cost-of-living protest, medium confidence"
+    rationale: |
+      Demonstrates demonstration_march (currently uncovered type), active state response
+      above 'monitoring', injuries without fatalities, and medium confidence when crowd
+      size is vague and date is approximate. This is the most common real-world pattern:
+      a march that ends in teargas dispersal with some arrests but no deaths.
+    article_snippet: |
+      Hundreds of protesters marched through central Abuja on Thursday, demanding that
+      the federal government reverse fuel subsidy removal and address the rising cost of
+      food and basic goods. The rally, called by a coalition of civil society groups
+      including the Take It Back Movement, began at Unity Fountain before moving toward
+      the National Assembly. Police deployed tear gas to disperse the crowd near the
+      Three Arms Zone, and at least seven demonstrators were arrested. Fourteen people
+      were treated for tear gas exposure at a nearby clinic. A police spokesperson
+      confirmed that those arrested would be released after processing.
+    extracted_events:
+      - event_date: null
+        country: "Nigeria"
+        city: "Abuja"
+        region: "Federal Capital Territory"
+        venue: "Unity Fountain / National Assembly approach"
+        location_notes: "March route from Unity Fountain toward Three Arms Zone"
+        event_type: "demonstration_march"
+        organizer: "Take It Back Movement"
+        participant_groups: ["civil society groups", "protesters"]
+        claims: ["reversal of fuel subsidy removal", "reduction in cost of food and basic goods"]
+        crowd_size: "hundreds"
+        duration: null
+        state_response: "teargas"
+        state_actors: ["police"]
+        arrests: "7"
+        fatalities: null
+        injuries: "14"
+        outcome: "dispersed"
+        outcome_notes: "Police confirmed arrested individuals would be released after processing"
+        article_title: null
+        article_url: null
+        article_date: null
+        source_country: null
+        source_language: "en"
+        confidence: "medium"
+
+  - id: "ex_05"
+    description: "Riot — post-election protest violence, Nigeria, protester-initiated"
+    rationale: |
+      Demonstrates riot classification where violence is PROTESTER-initiated (looting,
+      vehicle burning) not police-initiated. This is the most common misclassification:
+      articles describing post-election unrest are frequently tagged as
+      demonstration_march. The model must see that fatalities + rubber_bullets =
+      high turmoil, and that protester-initiated property destruction = RIOT not
+      CONFRONTATION. Confidence is high because the article is explicit.
+    article_snippet: |
+      Post-election protests in Lagos turned violent on Saturday evening after opposition
+      supporters, angered by results showing the ruling party candidate had won, began
+      burning vehicles and looting shops along Oshodi-Apapa Expressway. Groups of youths
+      smashed windows and set fire to at least four commercial buses. Security forces
+      fired rubber bullets to push back the crowd; two protesters were killed and nine
+      others sustained gunshot wounds. Thirty-one people were arrested. The Lagos State
+      government imposed a dusk-to-dawn curfew on the affected local government areas.
+      Opposition party officials condemned both the violence and the election result.
+    extracted_events:
+      - event_date: null
+        country: "Nigeria"
+        city: "Lagos"
+        region: "Lagos State"
+        venue: null
+        location_notes: "Oshodi-Apapa Expressway and surrounding areas"
+        event_type: "riot"
+        organizer: null
+        participant_groups: ["opposition supporters", "youths"]
+        claims: ["rejection of election results"]
+        crowd_size: null
+        duration: null
+        state_response: "rubber_bullets"
+        state_actors: ["security forces", "Lagos State government"]
+        arrests: "31"
+        fatalities: "2"
+        injuries: "9"
+        outcome: "escalated"
+        outcome_notes: "Curfew imposed on affected LGAs; opposition condemned both violence and result"
+        article_title: null
+        article_url: null
+        article_date: null
+        source_country: null
+        source_language: "en"
+        confidence: "high"
