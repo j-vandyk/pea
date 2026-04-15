@@ -95,6 +95,8 @@ def run_pipeline(
     geocode: bool = True,
     resume: bool = False,
     relevance_threshold: float = 0.30,
+    codebook_path: Optional[Path] = None,
+    examples_path: Optional[Path] = None,
 ):
     log.info("=== Protest Event Analysis Pipeline (codebook v2.3) ===")
     log.info(f"Query: '{query}' | Countries: {countries} | Days back: {days}")
@@ -192,6 +194,8 @@ def run_pipeline(
         provider=provider,
         checkpoint_path=checkpoint_path,
         upload_to=upload_to,
+        codebook_path=codebook_path,
+        examples_path=examples_path,
     )
     log.info(
         f"Extracted {len(events)} protest events ({len(failures)} extraction failures)"
@@ -293,6 +297,23 @@ def main():
         help="Upload outputs after run: 's3://bucket/prefix' or 'az://container/prefix'",
     )
     parser.add_argument(
+        "--codebook",
+        default=None,
+        help=(
+            "Path to a codebook YAML file to use instead of the default "
+            "configs/protest_codebook.yaml. Useful for running a different domain "
+            "codebook (e.g. configs/uas_codebook.yaml) without editing source files."
+        ),
+    )
+    parser.add_argument(
+        "--examples",
+        default=None,
+        help=(
+            "Path to an extraction examples YAML file to use instead of the default "
+            "configs/extraction_examples.yaml."
+        ),
+    )
+    parser.add_argument(
         "--stage",
         default="acquire",
         choices=["acquire", "process", "predict", "all"],
@@ -330,6 +351,8 @@ def main():
             geocode=not args.no_geocode,
             resume=args.resume,
             relevance_threshold=args.relevance_threshold,
+            codebook_path=Path(args.codebook) if args.codebook else None,
+            examples_path=Path(args.examples) if args.examples else None,
         )
 
     if args.stage in ("process", "all"):

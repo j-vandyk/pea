@@ -126,7 +126,7 @@ def _build_few_shot_examples(examples_path: Path) -> str:
     return "\n".join(lines)
 
 
-SYSTEM_PROMPT = """You are an expert coder for a protest event analysis (PEA) dataset,
+_BASE_SYSTEM_PROMPT = """You are an expert coder for a protest event analysis (PEA) dataset,
 specialising in the Global South and African contexts.
 You follow codebook version 2.2, aligned with Halterman & Keith (2025).
 
@@ -223,7 +223,7 @@ JSON schema for each event:
   "confidence": "high / medium / low"
 }"""
 
-SYSTEM_PROMPT = SYSTEM_PROMPT + _build_codebook_context(_CODEBOOK_PATH)
+SYSTEM_PROMPT = _BASE_SYSTEM_PROMPT + _build_codebook_context(_CODEBOOK_PATH)
 
 _FEW_SHOT_EXAMPLES = _build_few_shot_examples(_EXAMPLES_PATH)
 
@@ -364,10 +364,20 @@ def extract_from_article(
     api_key: str,
     provider: str = "claude",
     max_retries: int = 2,
+    system_prompt: Optional[str] = None,
+    few_shot_examples: Optional[str] = None,
 ) -> Optional[list[dict]]:
     """
     Run LLM extraction on a single article.
     Returns list of extracted event dicts, or None on total failure.
+
+    Args:
+        system_prompt:    Override the module-level SYSTEM_PROMPT (built from
+                          default codebook). Pass a pre-built prompt string to
+                          use a different codebook without editing source files.
+        few_shot_examples: Override the module-level _FEW_SHOT_EXAMPLES string.
+                          Pass a pre-built examples string to use a different
+                          examples file.
     """
     text = article.get("text_en") or article.get("text") or ""
 
@@ -379,8 +389,11 @@ def extract_from_article(
 
     truncated_text = text[:12000]
 
+    resolved_system = system_prompt if system_prompt is not None else SYSTEM_PROMPT
+    resolved_examples = few_shot_examples if few_shot_examples is not None else _FEW_SHOT_EXAMPLES
+
     prompt = USER_PROMPT_TEMPLATE.format(
-        few_shot_examples=_FEW_SHOT_EXAMPLES,
+        few_shot_examples=resolved_examples,
         title=article.get("title", "Unknown"),
         url=article.get("url", ""),
         date=article.get("seendate", "Unknown"),
@@ -391,7 +404,7 @@ def extract_from_article(
 
     for attempt in range(max_retries + 1):
         raw = _call_llm(
-            system=SYSTEM_PROMPT,
+            system=resolved_system,
             user=prompt,
             model=model,
             api_key=api_key,
@@ -453,6 +466,8 @@ def extract_events(
     rate_limit_delay: float = 1.5,
     checkpoint_path: Optional[str] = None,
     upload_to: Optional[str] = None,
+    codebook_path: Optional[Path] = None,
+    examples_path: Optional[Path] = None,
 ) -> tuple[list[dict], list[dict]]:
     """
     Run LLM extraction across all scraped articles via Azure AI Foundry.
@@ -465,6 +480,10 @@ def extract_events(
         rate_limit_delay: seconds between requests (polite pacing)
         checkpoint_path: path to checkpoint file; processed URLs are skipped
                          on resume and appended after each successful article
+        codebook_path: path to a codebook YAML file; overrides the default
+                       configs/protest_codebook.yaml for this run
+        examples_path: path to an extraction examples YAML file; overrides
+                       the default configs/extraction_examples.yaml for this run
 
     Returns:
         (events, failures) — flat list of extracted event dicts, and list of
@@ -485,6 +504,20 @@ def extract_events(
         )
 
     log.info(f"LLM provider: {provider} | model: {resolved_model}")
+
+    # Build prompts once for this run — custom paths override module defaults.
+    # Prompts are identical for every article in a run, enabling Azure prompt caching.
+    if codebook_path is not None:
+        run_system_prompt = _BASE_SYSTEM_PROMPT + _build_codebook_context(codebook_path)
+        log.info(f"Using custom codebook: {codebook_path}")
+    else:
+        run_system_prompt = SYSTEM_PROMPT  # pre-built at import from default path
+
+    if examples_path is not None:
+        run_few_shot = _build_few_shot_examples(examples_path)
+        log.info(f"Using custom examples: {examples_path}")
+    else:
+        run_few_shot = _FEW_SHOT_EXAMPLES  # pre-built at import from default path
 
     # Load already-processed URLs if resuming
     done_urls: set[str] = set()
@@ -512,7 +545,12 @@ def extract_events(
         log.info(f"[{i+1}/{len(articles)}] Extracting from: {url_display}...")
 
         events = extract_from_article(
-            article, model=resolved_model, api_key=resolved_key, provider=provider
+            article,
+            model=resolved_model,
+            api_key=resolved_key,
+            provider=provider,
+            system_prompt=run_system_prompt,
+            few_shot_examples=run_few_shot,
         )
 
         if events:
