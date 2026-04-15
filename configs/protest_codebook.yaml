@@ -42,7 +42,7 @@ metadata:
   source_datasets: ["ACLED", "PolDem", "FARPE", "Meta Codebook"]
   unit_of_analysis: "Individual protest event"
   minimum_participants: 2
-  llm_backend: "Claude (Anthropic API)"
+  llm_backend: "Azure AI Foundry (gpt-4o-mini)"
   version: "2.3"
   last_updated: "2026-04-04"
 
@@ -158,6 +158,8 @@ event_types:
       - "IF march passes by a building without physically blocking access → DEMONSTRATION_MARCH (not CONFRONTATION)"
       - "IF participants begin moving through public space with chants or banners → DEMONSTRATION_MARCH (not VIGIL, even if it started as one)"
 
+    # confidence_threshold is used by Stage 2 recheck_borderline() via codebook_manager.py.
+    # It is NOT injected into the LLM prompt. Do not remove or rename this field.
     confidence_threshold: 0.70
     codebook_equivalents:
       acled: "Protests"
@@ -701,6 +703,7 @@ african_context:
       - "Democratic Republic of Congo"
       - "Ethiopia"
       - "Tanzania"
+      - "Uganda"    # CIVICUS Monitor 2023-24: Repressed; pipeline target country (UG)
     closed_countries:
       - "Eritrea"
       - "Sudan"
@@ -815,7 +818,11 @@ state_response_vocabulary:
     water_cannon: "Water cannon used against protesters"
     rubber_bullets: "Rubber bullets, birdshot, or less-lethal projectiles fired"
     live_ammunition: "Live rounds fired by security forces"
-    arrests: "Protesters arrested or detained"
+    arrests: |
+      Protesters arrested or detained.
+      NOTE: Use 'arrests' here when arrest/detention is the primary state response.
+      Also populate the separate top-level 'arrests' field with the numeric count.
+      Both fields may be non-null simultaneously — they are not mutually exclusive.
     ban: "Protest banned by authorities before or during the event"
     curfew: "Curfew imposed in response to protest activity"
     legal_criminalisation: |
@@ -833,6 +840,28 @@ state_response_vocabulary:
       Bail conditions imposed prohibiting contact between arrested activists,
       preventing future coordination. A legally targeted disruption of organising.
     unknown: "State response unclear from article text — avoid using if possible"
+
+# ============================================================================
+# OUTCOME VOCABULARY
+# ============================================================================
+#
+# Allowed values for the outcome field.
+# The canonical list is also hardcoded in SYSTEM_PROMPT (extractor.py:185-186).
+# If you add or rename a value here, update extractor.py to match.
+#
+outcome_vocabulary:
+  description: |
+    Allowed values for the outcome field. Select the best description of how the
+    event concluded based on information in the article. Use 'unknown' only when
+    the article provides no outcome information at all.
+  values:
+    ongoing:            "Event is still in progress at time of article publication"
+    dispersed:          "Protesters dispersed — by authorities or voluntarily — without further escalation"
+    arrested:           "Key participants arrested; dispersal was primarily through detention"
+    demands_met:        "Stated demands were fully met by the target authority"
+    partial_concession: "Target authority made some concession but did not meet all demands"
+    escalated:          "Event escalated to violence or significantly intensified after initial report"
+    unknown:            "Outcome not described in article — use sparingly"
 
 # ============================================================================
 # CONFIDENCE THRESHOLDS EXPLAINED
