@@ -102,6 +102,7 @@ def run_pipeline(
     rpm_limit: int = 450,
     geocode_cache: Optional[Path] = Path("data/cache/geocode.json"),
     geocode_workers: int = 4,
+    scrape_workers: int = 16,
 ):
     log.info("=== Protest Event Analysis Pipeline (codebook v2.3) ===")
     log.info(f"Query: '{query}' | Countries: {countries} | Days back: {days}")
@@ -164,7 +165,7 @@ def run_pipeline(
 
     # Stage 2: Full-text scraping
     log.info("--- Stage 2: Full-text Scraping ---")
-    articles = scrape_articles(articles)
+    articles = scrape_articles(articles, max_workers=scrape_workers)
     scraped = [a for a in articles if a.get("text")]
     log.info(f"Successfully scraped {len(scraped)}/{len(articles)} articles")
 
@@ -274,6 +275,7 @@ def run_pipeline_multi_codebook(
     rpm_limit: int = 450,
     geocode_cache: Optional[Path] = Path("data/cache/geocode.json"),
     geocode_workers: int = 4,
+    scrape_workers: int = 16,
 ) -> dict:
     """
     Scrape and translate once, then run each domain's relevance filter and
@@ -332,7 +334,7 @@ def run_pipeline_multi_codebook(
 
     # --- Stage 2: Scraping (shared — happens once for all domains) ---
     log.info("--- Stage 2: Full-text Scraping (shared) ---")
-    articles = scrape_articles(articles)
+    articles = scrape_articles(articles, max_workers=scrape_workers)
     scraped = [a for a in articles if a.get("text")]
     log.info(f"Successfully scraped {len(scraped)}/{len(articles)} articles")
 
@@ -554,6 +556,16 @@ def main():
         ),
     )
     parser.add_argument(
+        "--scrape-workers",
+        type=int,
+        default=16,
+        help=(
+            "Threads dispatching article scrapes (default 16). Same-host "
+            "requests serialise via a per-host lock + jittered delay; "
+            "different hosts proceed in parallel."
+        ),
+    )
+    parser.add_argument(
         "--rpm-limit",
         type=int,
         default=450,
@@ -612,6 +624,7 @@ def main():
                 rpm_limit=args.rpm_limit,
                 geocode_cache=geocode_cache,
                 geocode_workers=args.geocode_workers,
+                scrape_workers=args.scrape_workers,
             )
         else:
             domain = domains[0] if domains else "protest"
@@ -658,6 +671,7 @@ def main():
                 rpm_limit=args.rpm_limit,
                 geocode_cache=geocode_cache,
                 geocode_workers=args.geocode_workers,
+                scrape_workers=args.scrape_workers,
             )
 
     if args.stage in ("process", "all"):
