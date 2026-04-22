@@ -29,6 +29,7 @@ The LLM is instructed to return a JSON array of event objects.
 import json
 import logging
 import os
+import random
 import re
 import time
 from pathlib import Path
@@ -91,10 +92,26 @@ _CODEBOOK_PATH = Path(__file__).parent.parent.parent / "configs" / "protest_code
 _EXAMPLES_PATH = Path(__file__).parent.parent.parent / "configs" / "extraction_examples.yaml"
 
 
-def _build_few_shot_examples(examples_path: Path) -> str:
+def _build_few_shot_examples(
+    examples_path: Path,
+    sample_n: int = 5,
+    seed: Optional[int] = None,
+) -> str:
     """
     Load the gold-standard extraction examples YAML and return a formatted
     string of demonstrated input/output pairs for injection into the user prompt.
+
+    Selection rules:
+      - Entries with ``pinned: true`` are always included (handwritten
+        curriculum; never evicted).
+      - Remaining slots up to ``sample_n`` total are filled by random sampling
+        from the non-pinned pool using ``random.Random(seed)``. With a
+        run-stable seed, the sample is identical across all articles in a
+        run (preserves Azure prompt caching) but varies across runs
+        (exposes the model to rotating promoted examples).
+      - If ``sample_n <= len(pinned)``, ``sample_n`` acts as a floor and
+        all pinned are still included.
+
     Returns an empty string if the file cannot be loaded.
     """
     try:
@@ -104,9 +121,21 @@ def _build_few_shot_examples(examples_path: Path) -> str:
         log.warning(f"Could not load extraction examples for prompt injection: {e}")
         return ""
 
-    examples = data.get("examples", [])
-    if not examples:
+    pool = (data or {}).get("examples", []) or []
+    if not pool:
         return ""
+
+    pinned = [ex for ex in pool if ex.get("pinned")]
+    rotatable = [ex for ex in pool if not ex.get("pinned")]
+
+    remaining = max(0, int(sample_n) - len(pinned))
+    if remaining and rotatable:
+        rng = random.Random(seed)
+        sampled = rng.sample(rotatable, min(remaining, len(rotatable)))
+    else:
+        sampled = []
+
+    selected = pinned + sampled
 
     lines = ["== FEW-SHOT EXAMPLES ==", ""]
     lines.append(
@@ -114,7 +143,7 @@ def _build_few_shot_examples(examples_path: Path) -> str:
         "Study them before processing the real article below.\n"
     )
 
-    for ex in examples:
+    for ex in selected:
         lines.append(f"--- Example: {ex.get('description', '')} ---")
         lines.append("ARTICLE TEXT:")
         lines.append(ex.get("article_snippet", "").strip())
@@ -461,6 +490,8 @@ def extract_events(
     examples_path: Optional[Path] = None,
     workers: int = 4,
     rpm_limit: int = 450,
+    examples_sample_n: int = 5,
+    examples_seed: Optional[int] = None,
 ) -> tuple[list[dict], list[dict]]:
     """
     Run LLM extraction across all scraped articles via Azure AI Foundry.
@@ -512,11 +543,21 @@ def extract_events(
     else:
         run_system = SYSTEM_PROMPT
 
+    # Rebuild few-shot examples for this run. A run-stable seed keeps the
+    # sampled subset identical across all articles in the run (so Azure
+    # prompt caching keeps hitting) while varying across runs (so promoted
+    # examples rotate in and out as the pool grows).
+    resolved_seed = (
+        examples_seed if examples_seed is not None else time.time_ns()
+    )
+    resolved_examples_path = examples_path if examples_path is not None else _EXAMPLES_PATH
+    run_examples = _build_few_shot_examples(
+        resolved_examples_path,
+        sample_n=examples_sample_n,
+        seed=resolved_seed,
+    )
     if examples_path is not None:
-        run_examples = _build_few_shot_examples(examples_path)
         log.info(f"Using custom examples: {examples_path}")
-    else:
-        run_examples = _FEW_SHOT_EXAMPLES
 
     # Load already-processed URLs if resuming
     done_urls: set[str] = set()

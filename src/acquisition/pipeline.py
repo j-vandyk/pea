@@ -104,6 +104,7 @@ def run_pipeline(
     geocode_workers: int = 4,
     scrape_workers: int = 16,
     relevance_batch_size: int = 32,
+    examples_sample_n: int = 5,
 ):
     log.info("=== Protest Event Analysis Pipeline (codebook v2.3) ===")
     log.info(f"Query: '{query}' | Countries: {countries} | Days back: {days}")
@@ -213,6 +214,7 @@ def run_pipeline(
         examples_path=examples_path,
         workers=workers,
         rpm_limit=rpm_limit,
+        examples_sample_n=examples_sample_n,
     )
     log.info(
         f"Extracted {len(events)} events ({len(failures)} extraction failures)"
@@ -282,6 +284,7 @@ def run_pipeline_multi_codebook(
     geocode_workers: int = 4,
     scrape_workers: int = 16,
     relevance_batch_size: int = 32,
+    examples_sample_n: int = 5,
 ) -> dict:
     """
     Scrape and translate once, then run each domain's relevance filter and
@@ -401,6 +404,7 @@ def run_pipeline_multi_codebook(
             examples_path=cfg.get("examples"),
             workers=workers,
             rpm_limit=rpm_limit,
+            examples_sample_n=examples_sample_n,
         )
         log.info(f"  Extracted {len(events)} events ({len(failures)} failures)")
 
@@ -586,6 +590,18 @@ def main():
         ),
     )
     parser.add_argument(
+        "--examples-sample-n",
+        type=int,
+        default=5,
+        help=(
+            "Number of few-shot examples to inject per run (default 5). "
+            "Pinned examples are always included; the remainder is filled by "
+            "a run-stable random sample from the promoted pool, so promoted "
+            "annotator corrections rotate in and out across runs. Azure "
+            "prompt caching is preserved within a run."
+        ),
+    )
+    parser.add_argument(
         "--rpm-limit",
         type=int,
         default=450,
@@ -646,6 +662,7 @@ def main():
                 geocode_workers=args.geocode_workers,
                 scrape_workers=args.scrape_workers,
                 relevance_batch_size=args.relevance_batch_size,
+                examples_sample_n=args.examples_sample_n,
             )
         else:
             domain = domains[0] if domains else "protest"
@@ -694,6 +711,7 @@ def main():
                 geocode_workers=args.geocode_workers,
                 scrape_workers=args.scrape_workers,
                 relevance_batch_size=args.relevance_batch_size,
+                examples_sample_n=args.examples_sample_n,
             )
 
     if args.stage in ("process", "all"):
