@@ -100,6 +100,8 @@ def run_pipeline(
     examples_path: Optional[Path] = None,
     workers: int = 1,
     rpm_limit: int = 450,
+    geocode_cache: Optional[Path] = Path("data/cache/geocode.json"),
+    geocode_workers: int = 4,
 ):
     log.info("=== Protest Event Analysis Pipeline (codebook v2.3) ===")
     log.info(f"Query: '{query}' | Countries: {countries} | Days back: {days}")
@@ -213,7 +215,11 @@ def run_pipeline(
     # Stage 4.5: Geocoding
     if geocode and events:
         log.info("--- Stage 4.5: Geocoding ---")
-        events = geocode_events(events)
+        events = geocode_events(
+            events,
+            cache_path=geocode_cache,
+            max_workers=geocode_workers,
+        )
 
     # Stage 5: Storage
     log.info("--- Stage 5: Saving Results ---")
@@ -266,6 +272,8 @@ def run_pipeline_multi_codebook(
     relevance_threshold: float = 0.30,
     workers: int = 1,
     rpm_limit: int = 450,
+    geocode_cache: Optional[Path] = Path("data/cache/geocode.json"),
+    geocode_workers: int = 4,
 ) -> dict:
     """
     Scrape and translate once, then run each domain's relevance filter and
@@ -387,7 +395,11 @@ def run_pipeline_multi_codebook(
         # Stage 4.5: Geocoding
         if geocode and events:
             log.info(f"--- Stage 4.5: Geocoding (domain={domain}) ---")
-            events = geocode_events(events)
+            events = geocode_events(
+                events,
+                cache_path=geocode_cache,
+                max_workers=geocode_workers,
+            )
 
         # Stage 5: Storage
         save_results(
@@ -458,6 +470,25 @@ def main():
     )
     parser.add_argument(
         "--no-geocode", action="store_true", help="Skip geocoding step (Nominatim OSM)"
+    )
+    parser.add_argument(
+        "--geocode-cache",
+        default="data/cache/geocode.json",
+        help=(
+            "Path to on-disk geocode cache (JSON). Persists across runs so "
+            "repeated (city, country) pairs skip Nominatim. "
+            "Pass 'none' to disable. Default: data/cache/geocode.json"
+        ),
+    )
+    parser.add_argument(
+        "--geocode-workers",
+        type=int,
+        default=4,
+        help=(
+            "Threads dispatching Nominatim lookups (default 4). All threads "
+            "share one rate limiter to honour Nominatim's 1 req/s policy; "
+            "speedup comes from parallel cache hits, not parallel network."
+        ),
     )
     parser.add_argument(
         "--resume",
@@ -548,6 +579,13 @@ def main():
     output_dir = Path(args.output_dir)
     domains = [d.strip() for d in args.domains.split(",") if d.strip()]
 
+    # Resolve geocode cache path: 'none' / empty string disables caching.
+    _geocode_cache_arg = (args.geocode_cache or "").strip()
+    geocode_cache = (
+        None if _geocode_cache_arg.lower() in ("", "none", "off", "false")
+        else Path(_geocode_cache_arg)
+    )
+
     if args.stage in ("acquire", "all"):
         if len(domains) > 1:
             # Multi-domain: scrape once, route to each codebook.
@@ -571,6 +609,8 @@ def main():
                 relevance_threshold=args.relevance_threshold,
                 workers=args.workers,
                 rpm_limit=args.rpm_limit,
+                geocode_cache=geocode_cache,
+                geocode_workers=args.geocode_workers,
             )
         else:
             domain = domains[0] if domains else "protest"
@@ -615,6 +655,8 @@ def main():
                 examples_path=examples_path,
                 workers=args.workers,
                 rpm_limit=args.rpm_limit,
+                geocode_cache=geocode_cache,
+                geocode_workers=args.geocode_workers,
             )
 
     if args.stage in ("process", "all"):
