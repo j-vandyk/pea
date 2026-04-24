@@ -114,15 +114,28 @@ def flatten_for_csv(event: dict) -> dict:
     return row
 
 
-def _az_client(conn_str: str):
-    """Return a BlobServiceClient from a connection string."""
+def _az_client(conn_str: Optional[str] = None) -> "BlobServiceClient":
+    """Return a BlobServiceClient using managed identity or a connection string.
+
+    Managed identity (Container Apps): set AZURE_STORAGE_ACCOUNT_URL.
+    Local dev: set AZURE_STORAGE_CONNECTION_STRING (or pass conn_str directly).
+    """
     try:
         from azure.storage.blob import BlobServiceClient
     except ImportError:
         raise ImportError(
             "azure-storage-blob is required: pip install azure-storage-blob"
         )
-    return BlobServiceClient.from_connection_string(conn_str)
+    account_url = os.environ.get("AZURE_STORAGE_ACCOUNT_URL")
+    if account_url:
+        from azure.identity import DefaultAzureCredential
+        return BlobServiceClient(account_url, credential=DefaultAzureCredential())
+    if conn_str:
+        return BlobServiceClient.from_connection_string(conn_str)
+    raise RuntimeError(
+        "Set AZURE_STORAGE_ACCOUNT_URL (managed identity) "
+        "or AZURE_STORAGE_CONNECTION_STRING (local dev)"
+    )
 
 
 def sync_checkpoint_from_blob(upload_to: str, output_dir: Path) -> bool:
@@ -134,11 +147,6 @@ def sync_checkpoint_from_blob(upload_to: str, output_dir: Path) -> bool:
     if not upload_to.startswith("az://"):
         return False
     conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-    if not conn_str:
-        log.warning(
-            "AZURE_STORAGE_CONNECTION_STRING not set — cannot sync checkpoint from blob"
-        )
-        return False
     container, prefix = upload_to[5:].split("/", 1)
     blob_name = f"{prefix}/checkpoint.txt"
     try:
@@ -195,8 +203,6 @@ def _upload_outputs(destination: str, paths: list[Path]) -> None:
 
     elif destination.startswith("az://"):
         conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-        if not conn_str:
-            raise ValueError("AZURE_STORAGE_CONNECTION_STRING env var not set")
         container, prefix = destination[5:].split("/", 1)
         client = _az_client(conn_str)
         for p in paths:

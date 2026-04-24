@@ -17,6 +17,7 @@ geopy>=2.4.0
 
 # Azure Storage
 azure-storage-blob>=12.19.0
+azure-identity>=1.16.0
 
 # Data Processing
 pydantic==2.6.0

@@ -206,15 +206,16 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Deployment script contains hardcoded ACR credentials — never commit
-infra/deploy.sh
-
 # External validation corpora (clone separately — see CLAUDE.md Validation section)
 CEHA/
 CASE2021/
 
-# Infrastructure outputs / local scripts
-infra/
+# Infrastructure: ignore generated/credential-containing files, not scripts
+infra/*.tfstate
+infra/*.tfstate.backup
+infra/.terraform/
+infra/*.auto.tfvars
+infra/*.env
 
 # Project data
 data/

@@ -437,9 +437,16 @@ def run_pipeline_multi_codebook(
 
 
 def main():
+    import signal
     from dotenv import load_dotenv
 
     load_dotenv()
+
+    def _handle_sigterm(signum, frame):
+        log.warning("SIGTERM received — checkpoint already persisted; exiting cleanly")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
 
     parser = argparse.ArgumentParser(
         description="Protest Event Analysis Pipeline — Global South focus (codebook v2.3)"
@@ -758,4 +765,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        log.exception("Pipeline failed with unhandled exception")
+        sys.exit(1)
